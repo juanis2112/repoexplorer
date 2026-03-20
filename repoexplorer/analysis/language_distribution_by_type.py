@@ -156,7 +156,7 @@ def plot_language_distribution_by_type(
         )
     else:
         ax.set_title(
-            rf"$\bf{{UC\ Language\ Distribution}}$ (Total: {total_repositories})",
+            rf"$\bf{{Language\ Distribution}}$ (Total: {total_repositories})",
             fontsize=title_size,
             loc="center",
             pad=20
