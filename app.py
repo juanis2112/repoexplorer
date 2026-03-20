@@ -28,6 +28,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# Global feature flag: enable/disable the chat tab and all chat behavior.
+# By default this is False; set the environment variable ENABLE_CHAT=true
+# (or edit this value) to turn the chat tab back on.
+ENABLE_CHAT = False
+
+
+# Global flag for where to read data:
+# - "local"  -> use parquet files under Data/parquet (default)
+# - "remote" -> download reduced combined parquet files from S3 bucket
+DATA = "remote"
+
+
 if "OPENAI_MODEL" not in os.environ:
     os.environ["OPENAI_MODEL"] = "gpt-5-mini"
 
@@ -36,10 +48,25 @@ if "OPENAI_MODEL" not in os.environ:
 PARQUET_BASE = "Data/parquet"
 COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_combined_clean.parquet")
 SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_combined_clean.parquet")
-ORGANIZATIONS_PARQUET = os.path.join(PARQUET_BASE, "organizations_combined_clean.parquet")
-CONTRIBUTORS_PARQUET = os.path.join(PARQUET_BASE, "contributors_combined_clean.parquet")
-# Commits table (use existing combined, cleaned file)
-COMMITS_PARQUET = os.path.join(PARQUET_BASE, "commits_combined_clean.parquet")
+# ORGANIZATIONS_PARQUET = os.path.join(PARQUET_BASE, "organizations_combined_clean.parquet")
+# CONTRIBUTORS_PARQUET = os.path.join(PARQUET_BASE, "contributors_combined_clean.parquet")
+# COMMITS_PARQUET = os.path.join(PARQUET_BASE, "commits_combined_clean.parquet")
+
+
+# Read data from public bucket 
+def read_parquet_from_s3_public(bucket_name, object_key):
+    url = f"https://{bucket_name}.s3.amazonaws.com/{object_key}"
+    df = pd.read_parquet(url)
+    return df
+
+
+if DATA == "remote":
+    # Usage in your Shiny app
+    df = read_parquet_from_s3_public("repoexplorer-data", "repositories_combined_clean.parquet")
+    df_security = read_parquet_from_s3_public("repoexplorer-data", "security_combined_clean.parquet")
+
+
+
 
 # Columns to load (fewer columns = faster load). "university" is added from config.
 COLUMNS_TO_LOAD = [
@@ -286,52 +313,55 @@ def _load_one_acronym(acronym: str, parquet_dir: str):
     return df
 
 
-# Fast path: single pre-merged parquet 
-if os.path.isfile(COMBINED_PARQUET):
-    try:
-        cload = COLUMNS_TO_LOAD + ["university"]
-        df = pd.read_parquet(COMBINED_PARQUET, columns=cload)
-        if "university" not in df.columns:
-            df["university"] = "Unknown"
-    except Exception:
-        logging.exception("Failed to load combined parquet %s", COMBINED_PARQUET)
-        df = pd.DataFrame()
-else:
-    # Build case-insensitive map: parquet subdir name (lower) -> actual subdir name
-    _parquet_dirs = {}
-    if os.path.isdir(PARQUET_BASE):
-        for name in os.listdir(PARQUET_BASE):
-            if os.path.isdir(os.path.join(PARQUET_BASE, name)):
-                _parquet_dirs[name.lower()] = name
+# Fast path / local loading: only used when DATA == "local".
+if DATA == "local":
+    # Load main repositories table
+    if os.path.isfile(COMBINED_PARQUET):
+        try:
+            cload = COLUMNS_TO_LOAD + ["university"]
+            df = pd.read_parquet(COMBINED_PARQUET, columns=cload)
+            if "university" not in df.columns:
+                df["university"] = "Unknown"
+        except Exception:
+            logging.exception("Failed to load combined parquet %s", COMBINED_PARQUET)
+            df = pd.DataFrame()
+    else:
+        # Build case-insensitive map: parquet subdir name (lower) -> actual subdir name
+        _parquet_dirs = {}
+        if os.path.isdir(PARQUET_BASE):
+            for name in os.listdir(PARQUET_BASE):
+                if os.path.isdir(os.path.join(PARQUET_BASE, name)):
+                    _parquet_dirs[name.lower()] = name
 
-    df_list = []
-    with ThreadPoolExecutor(max_workers=min(8, len(ACRONYMS) or 1)) as executor:
-        submitted = []
-        for acronym in ACRONYMS:
-            key = acronym.replace(" ", "_").lower()
-            parquet_dir = _parquet_dirs.get(key)
-            if not parquet_dir:
-                continue
-            submitted.append((executor.submit(_load_one_acronym, acronym, parquet_dir), acronym))
-        for future, acronym in submitted:
-            try:
-                result = future.result()
-                if result is not None:
-                    df_list.append(result)
-                else:
-                    logging.error("Failed to load parquet for acronym %s", acronym)
-            except Exception:
-                logging.exception("Failed to load parquet for acronym %s", acronym)
-    df = pd.concat(df_list, ignore_index=True) if df_list else pd.DataFrame()
+        df_list = []
+        with ThreadPoolExecutor(max_workers=min(8, len(ACRONYMS) or 1)) as executor:
+            submitted = []
+            for acronym in ACRONYMS:
+                key = acronym.replace(" ", "_").lower()
+                parquet_dir = _parquet_dirs.get(key)
+                if not parquet_dir:
+                    continue
+                submitted.append((executor.submit(_load_one_acronym, acronym, parquet_dir), acronym))
+            for future, acronym in submitted:
+                try:
+                    result = future.result()
+                    if result is not None:
+                        df_list.append(result)
+                    else:
+                        logging.error("Failed to load parquet for acronym %s", acronym)
+                except Exception:
+                    logging.exception("Failed to load parquet for acronym %s", acronym)
+        df = pd.concat(df_list, ignore_index=True) if df_list else pd.DataFrame()
 
-# Load security_combined table (OpenSSF scores)
-df_security = pd.DataFrame()
-if os.path.isfile(SECURITY_PARQUET):
-    try:
-        df_security = pd.read_parquet(SECURITY_PARQUET)
-    except Exception:
-        logging.exception("Failed to load security parquet %s", SECURITY_PARQUET)
-        df_security = pd.DataFrame()
+# Load security_combined table (OpenSSF scores) when using local data
+if DATA == "local":
+    df_security = pd.DataFrame()
+    if os.path.isfile(SECURITY_PARQUET):
+        try:
+            df_security = pd.read_parquet(SECURITY_PARQUET)
+        except Exception:
+            logging.exception("Failed to load security parquet %s", SECURITY_PARQUET)
+            df_security = pd.DataFrame()
 
 # # Load organizations table
 # df_organizations = pd.DataFrame()
@@ -352,13 +382,13 @@ if os.path.isfile(SECURITY_PARQUET):
 #         df_contributors = pd.DataFrame()
 
 # Load commits (all_combined) table
-df_commits = pd.DataFrame()
-if os.path.isfile(COMMITS_PARQUET):
-    try:
-        df_commits = pd.read_parquet(COMMITS_PARQUET)
-    except Exception:
-        logging.exception("Failed to load commits parquet %s", COMMITS_PARQUET)
-        df_commits = pd.DataFrame()
+# df_commits = pd.DataFrame()
+# if os.path.isfile(COMMITS_PARQUET):
+#     try:
+#         df_commits = pd.read_parquet(COMMITS_PARQUET)
+#     except Exception:
+#         logging.exception("Failed to load commits parquet %s", COMMITS_PARQUET)
+#         df_commits = pd.DataFrame()
 
 
 # =============================================== App UI ==========================================
@@ -386,15 +416,18 @@ _slider_max_downloads = int(_m) if _m is not None and not pd.isna(_m) else 1000
 
 # ------------------------------------ QueryChat Config -------------------------------------------
 # Chat uses only repos with prediction threshold >= 0.8 (same as default slider)
-_greeting_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "greeting.md")
-with open(_greeting_path, encoding="utf-8") as _f:
-    _greeting_md = _f.read()
+if ENABLE_CHAT:
+    _greeting_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "greeting.md")
+    with open(_greeting_path, encoding="utf-8") as _f:
+        _greeting_md = _f.read()
 
-querychat_config = qc.init(
-    data_source=_df_08,
-    table_name="Repositories",
-    greeting=_greeting_md,
-)
+    querychat_config = qc.init(
+        data_source=_df_08,
+        table_name="Repositories",
+        greeting=_greeting_md,
+    )
+else:
+    querychat_config = None
 
 with ui.sidebar(open="open", bg="#f8f8f8", width="300px"):  
    with ui.navset_pill(id="side_tab"): 
@@ -432,8 +465,9 @@ with ui.sidebar(open="open", bg="#f8f8f8", width="300px"):
             
             
 
-       with ui.nav_panel("Chat Bot"):
-            qc.ui("chat")  # may return True; do not use as last expression
+       if ENABLE_CHAT:
+           with ui.nav_panel("Chat Bot"):
+               qc.ui("chat")  # may return True; do not use as last expression
    
    # Reset button at the bottom of the sidebar
    ui.br()
@@ -445,12 +479,12 @@ with ui.sidebar(open="open", bg="#f8f8f8", width="300px"):
 chat = None
 
 
-def _init_chat_server():
-    global chat
-    chat = qc.server("chat", querychat_config)
+if ENABLE_CHAT:
+    def _init_chat_server():
+        global chat
+        chat = qc.server("chat", querychat_config)
 
-
-_init_chat_server()
+    _init_chat_server()
 
 # Absorb any stray top-level return value so "True" does not render in main panel
 ui.HTML("")
@@ -470,13 +504,14 @@ def reset_all_filters():
     ui.update_text("table_search", value="")
 
     # Ask the chatbot to reset its filters (sends "reset all filters" so the LLM can invoke reset_dashboard)
-    try:
-        sess = shiny_session.get_current_session()
-        if sess is not None:
-            # Send message to chat input so the bot receives "reset all filters" and can clear filters
-            sess.send_input_message("chat-message", {"value": "reset all filters"})
-    except Exception:
-        pass
+    if ENABLE_CHAT:
+        try:
+            sess = shiny_session.get_current_session()
+            if sess is not None:
+                # Send message to chat input so the bot receives "reset all filters" and can clear filters
+                sess.send_input_message("chat-message", {"value": "reset all filters"})
+        except Exception:
+            pass
 
 # ======================================== Main panel  ===============================================
 
@@ -1154,7 +1189,7 @@ def filtered_df():
         ]
 
     # Apply chat filters - combine with manual filters (only when chat is active and has results)
-    if chat is not None:
+    if ENABLE_CHAT and chat is not None:
         try:
             chat_df = chat.df()
             if chat_df is not None and len(chat_df) > 0:
