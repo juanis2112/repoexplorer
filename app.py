@@ -90,6 +90,75 @@ FEATURES = [
 ]
 
 
+def _is_missing_scalar(v):
+    """True for None, NaN, or pandas NA (common for null cells from parquet)."""
+    if v is None:
+        return True
+    try:
+        return bool(pd.isna(v))
+    except Exception:
+        return False
+
+
+def _safe_markdown_text(v):
+    """ui.markdown / textwrap require str; float NaN from pandas breaks deploy."""
+    if _is_missing_scalar(v):
+        return ""
+    return str(v)
+
+
+def _safe_display_str(v, default="—"):
+    if _is_missing_scalar(v):
+        return default
+    return str(v)
+
+
+def _safe_int_metric(v):
+    if _is_missing_scalar(v):
+        return "N/A"
+    try:
+        return str(int(float(v)))
+    except (ValueError, TypeError):
+        return "N/A"
+
+
+def _has_nonempty_text(v):
+    if _is_missing_scalar(v):
+        return False
+    s = str(v).strip()
+    return len(s) > 0 and s.lower() not in ("none", "nan", "<na>")
+
+
+def _truthy_feature_flag(v):
+    """For 0/1 or boolean presence columns; NaN is false."""
+    if _is_missing_scalar(v):
+        return False
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        try:
+            return float(v) != 0.0
+        except Exception:
+            return False
+    s = str(v).strip().lower()
+    return s not in ("", "none", "nan", "false", "0", "<na>")
+
+
+def _normalize_license_column(df: pd.DataFrame) -> None:
+    """
+    In-place: missing / empty licenses become pandas NA.
+
+    Remote parquet often stores null licenses as real NaN. Using ``.astype(str)``
+    in metrics turns those into the literal "nan" string, which incorrectly counts
+    as having a license (~100%). Local files may use empty strings instead.
+    """
+    if df is None or df.empty or "license" not in df.columns:
+        return
+    s = df["license"].astype("string").str.strip()
+    no_license = s.isna() | (s.str.lower().isin(["", "none", "nan", "null", "<na>"]))
+    df["license"] = s.mask(no_license, pd.NA)
+
+
 def _make_feature_counts_combined_fig(
     data,
     features,
@@ -391,6 +460,9 @@ if DATA == "local":
 #         df_commits = pd.DataFrame()
 
 
+_normalize_license_column(df)
+
+
 # =============================================== App UI ==========================================
 
 ui.page_opts(title="University Repositories", fillable=True)
@@ -399,7 +471,7 @@ ui.page_opts(title="University Repositories", fillable=True)
 
 # ------------------------------------ Manual Filters ----------------------------------------------
 
-licenses = df["license"].unique().tolist() if "license" in df.columns else []
+licenses = df["license"].dropna().unique().tolist() if "license" in df.columns else []
 languages = df["language"].unique().tolist() if "language" in df.columns else []
 universities = df["university"].unique().tolist() if "university" in df.columns else []
 types = df["type_prediction_gpt_5_mini"].unique().tolist() if "type_prediction_gpt_5_mini" in df.columns else []
@@ -563,8 +635,8 @@ with ui.navset_pill(id="tab"):
                         if total == 0:
                             "0%"
                         else:
-                            lic = data["license"].astype(str).str.strip()
-                            with_license = ((lic != "") & (lic.str.lower() != "none")).sum()
+                            # After _normalize_license_column, null means no license.
+                            with_license = int(data["license"].notna().sum())
                             pct = 100.0 * with_license / total
                             f"{pct:.1f}%"
 
@@ -787,14 +859,10 @@ with ui.navset_pill(id="tab"):
                 row_idx = selected_rows[0]
                 data = filtered_df()
                 selected = data.iloc[row_idx]
-            
-                # Safely get impact-related metrics, falling back to 'N/A' if missing
-                stars = selected.get("stargazers_count", "N/A")
-                downloads = selected.get("release_downloads", "N/A")
-                forks_count = selected.get("forks_count", "N/A")
-                num_issues = selected.get("open_issues_count", "N/A")
-                num_contributors = selected.get("contributor_count", "N/A")
 
+                _readme_md = _safe_markdown_text(selected.get("readme"))
+                _contributing_md = _safe_markdown_text(selected.get("contributing"))
+                _security_policy_md = _safe_markdown_text(selected.get("security_policy"))
 
                 # Match security metrics row (from security_combined_clean.parquet) by html_url
                 sec_row = None
@@ -813,31 +881,39 @@ with ui.navset_pill(id="tab"):
                                 "Overview",
                                 ui.p(
                                     ui.tags.span("Name: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    selected["full_name"],
+                                    _safe_display_str(selected.get("full_name")),
                                 ),
                                 ui.p(
                                     ui.tags.span("University: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    selected.get("university", "Unknown"),
+                                    _safe_display_str(selected.get("university"), "Unknown"),
                                 ),
                                 ui.p(
                                     ui.tags.span("License: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    selected["license"],
+                                    _safe_display_str(selected.get("license")),
                                 ),
                                 ui.p(
                                     ui.tags.span("Language: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    selected["language"],
+                                    _safe_display_str(selected.get("language")),
                                 ),
                                 ui.p(
                                     ui.tags.span("Project Type: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    selected["type_prediction_gpt_5_mini"],
+                                    _safe_display_str(selected.get("type_prediction_gpt_5_mini")),
                                 ),
                                 ui.p(
                                     ui.tags.span("Description: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    selected["description"],
+                                    _safe_display_str(selected.get("description")),
                                 ),
                                 ui.p(
                                     ui.tags.span("URL: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    ui.tags.a(selected["html_url"], href=selected["html_url"], target="_blank"),
+                                    (
+                                        ui.tags.a(
+                                            _safe_display_str(selected.get("html_url"), ""),
+                                            href=_safe_display_str(selected.get("html_url"), ""),
+                                            target="_blank",
+                                        )
+                                        if _has_nonempty_text(selected.get("html_url"))
+                                        else "—"
+                                    ),
                                 ),
                             ),
                             sui.nav_panel(
@@ -861,7 +937,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td(str(int(stars)), style="text-align: center;"),
+                                        ui.tags.td(_safe_int_metric(selected.get("stargazers_count")), style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -871,7 +947,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td(str(int(downloads)), style="text-align: center;"),
+                                        ui.tags.td(_safe_int_metric(selected.get("release_downloads")), style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -881,7 +957,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td(str(int(forks_count)), style="text-align: center;"),
+                                        ui.tags.td(_safe_int_metric(selected.get("forks_count")), style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -891,7 +967,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td(str(int(num_issues)), style="text-align: center;"),
+                                        ui.tags.td(_safe_int_metric(selected.get("open_issues_count")), style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -901,7 +977,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td(str(int(num_contributors)), style="text-align: center;"),
+                                        ui.tags.td(_safe_int_metric(selected.get("contributor_count")), style="text-align: center;"),
                                     ),
                                     style="width: 100%; border-collapse: collapse;",
                                 ),
@@ -927,7 +1003,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td("✅" if selected.get("description") else "✗", style="text-align: center;"),
+                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("description")) else "✗", style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -937,7 +1013,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td("✅" if selected.get("readme") else "✗", style="text-align: center;"),
+                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("readme")) else "✗", style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -947,7 +1023,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td("✅" if selected.get("contributing") else "✗", style="text-align: center;"),
+                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("contributing")) else "✗", style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -957,7 +1033,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td("✅" if selected.get("code_of_conduct_file") else "✗", style="text-align: center;"),
+                                        ui.tags.td("✅" if _truthy_feature_flag(selected.get("code_of_conduct_file")) else "✗", style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -967,7 +1043,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td("✅" if selected.get("security_policy") else "✗", style="text-align: center;"),
+                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("security_policy")) else "✗", style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -977,7 +1053,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td("✅" if selected.get("issue_templates") else "✗", style="text-align: center;"),
+                                        ui.tags.td("✅" if _truthy_feature_flag(selected.get("issue_templates")) else "✗", style="text-align: center;"),
                                     ),
                                     ui.tags.tr(
                                         ui.tags.td(
@@ -987,7 +1063,7 @@ with ui.navset_pill(id="tab"):
                                                 "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                             ),
                                         ),
-                                        ui.tags.td("✅" if selected.get("pull_request_template") else "✗", style="text-align: center;"),
+                                        ui.tags.td("✅" if _truthy_feature_flag(selected.get("pull_request_template")) else "✗", style="text-align: center;"),
                                     ),
                                     style="width: 100%; border-collapse: collapse;",
                                 ),
@@ -1017,7 +1093,7 @@ with ui.navset_pill(id="tab"):
                                                         "color: var(--bs-primary, #0d6efd); font-weight: bold;"
                                                     ),
                                                 ),
-                                                ui.tags.td(str(sec_row.get(col, "—")), style="text-align: center;"),
+                                                ui.tags.td(_safe_display_str(sec_row.get(col)), style="text-align: center;"),
                                             )
                                             for name, col in [
                                                 ("Binary artifacts", "Binary_Artifacts"),
@@ -1053,20 +1129,20 @@ with ui.navset_pill(id="tab"):
                         sui.navset_tab(
                             sui.nav_panel(
                                 "README",
-                                ui.markdown(selected.get("readme", "") or "")
-                                if selected.get("readme")
+                                ui.markdown(_readme_md)
+                                if _readme_md
                                 else ui.p("No README available", class_="text-muted"),
                             ),
                             sui.nav_panel(
                                 "Contributing",
-                                ui.markdown(selected.get("contributing", "") or "")
-                                if selected.get("contributing")
+                                ui.markdown(_contributing_md)
+                                if _contributing_md
                                 else ui.p("No contributing guide available", class_="text-muted"),
                             ),
                             sui.nav_panel(
                                 "Security Policy",
-                                ui.markdown(selected.get("security_policy", "") or "")
-                                if selected.get("security_policy")
+                                ui.markdown(_security_policy_md)
+                                if _security_policy_md
                                 else ui.p("No security policy available", class_="text-muted"),
                             ),
                             id="repo_detail_bottom",
