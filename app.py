@@ -306,26 +306,31 @@ aside[data-bslib-sidebar],
 }
 """)
 
-# Remove stray "True" that can appear from querychat/Shiny return values (This is hacky but leaving it for now)
+# Remove stray "True/False" that can appear from querychat/Shiny return values (This is hacky but leaving it for now)
 ui.tags.script("""
 (function() {
-  function removeTrueNodes(node) {
+  function isStrayBooleanText(text) {
+    var t = (text || "").trim();
+    return t === "True" || t === "False";
+  }
+  function removeBooleanNodes(node) {
     if (!node) return;
-    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === "True") {
+    if (node.nodeType === Node.TEXT_NODE && isStrayBooleanText(node.textContent)) {
       node.parentNode.removeChild(node);
       return;
     }
     if (node.nodeType === Node.ELEMENT_NODE && node.childNodes.length === 1 &&
-        node.childNodes[0].nodeType === Node.TEXT_NODE && node.childNodes[0].textContent.trim() === "True") {
+        node.childNodes[0].nodeType === Node.TEXT_NODE &&
+        isStrayBooleanText(node.childNodes[0].textContent)) {
       node.parentNode.removeChild(node);
       return;
     }
     for (var i = node.childNodes.length - 1; i >= 0; i--) {
-      removeTrueNodes(node.childNodes[i]);
+      removeBooleanNodes(node.childNodes[i]);
     }
   }
   function run() {
-    removeTrueNodes(document.body);
+    removeBooleanNodes(document.body);
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", run);
