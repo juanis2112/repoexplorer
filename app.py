@@ -54,7 +54,7 @@ SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_combined_clean.parquet")
 
 # Columns to load (fewer columns = faster load). "university" is added from config.
 COLUMNS_TO_LOAD = [
-    "id", "full_name", "owner", "license", "language", "html_url", "description", "fork", "created_at",
+    "university", "id", "full_name", "owner", "license", "language", "html_url", "description", "fork", "created_at",
     "updated_at", "pushed_at", "homepage", "size", "stargazers_count", "readme",
     "watchers_count", "forks_count", "open_issues_count", "watchers", "organization", "release_downloads", "contributors", 
     "contributor_count", "bus_factor", "code_of_conduct_file", "contributing", "security_policy", "issue_templates",
@@ -396,7 +396,7 @@ if DATA == "remote":
 
 else:
     # Load main repositories table
-    cload = COLUMNS_TO_LOAD + ["university"]
+    cload = COLUMNS_TO_LOAD
     df = pd.read_parquet(COMBINED_PARQUET, columns=cload)
     if "university" not in df.columns:
         df["university"] = "Unknown"
