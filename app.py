@@ -52,22 +52,6 @@ SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_combined_clean.parquet")
 # CONTRIBUTORS_PARQUET = os.path.join(PARQUET_BASE, "contributors_combined_clean.parquet")
 # COMMITS_PARQUET = os.path.join(PARQUET_BASE, "commits_combined_clean.parquet")
 
-
-# Read data from public bucket 
-def read_parquet_from_s3_public(bucket_name, object_key):
-    url = f"https://{bucket_name}.s3.amazonaws.com/{object_key}"
-    df = pd.read_parquet(url)
-    return df
-
-
-if DATA == "remote":
-    # Usage in your Shiny app
-    df = read_parquet_from_s3_public("repoexplorer-data", "repositories_combined_clean.parquet")
-    df_security = read_parquet_from_s3_public("repoexplorer-data", "security_combined_clean.parquet")
-
-
-
-
 # Columns to load (fewer columns = faster load). "university" is added from config.
 COLUMNS_TO_LOAD = [
     "id", "full_name", "owner", "license", "language", "html_url", "description", "fork", "created_at",
@@ -236,6 +220,24 @@ def _make_language_combined_fig(
     )
     return fig
 
+
+# Read data from public bucket 
+def read_parquet_from_s3_public(bucket_name, object_key, columns=COLUMNS_TO_LOAD):
+    url = f"https://{bucket_name}.s3.amazonaws.com/{object_key}"
+    return pd.read_parquet(url, columns=columns)
+
+def optimize_dtypes(df: pd.DataFrame):
+    for col in ["stargazers_count", "forks_count", "watchers_count",
+                "open_issues_count", "subscribers_count", "contributor_count",
+                "bus_factor", "release_downloads"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
+    if "affiliation_prediction_gpt_5_mini" in df.columns:
+        df["affiliation_prediction_gpt_5_mini"] = pd.to_numeric(
+            df["affiliation_prediction_gpt_5_mini"], errors="coerce"
+        ).astype("float32")
+    return df
+
 #------------------------------------ Styling ---------------------------------------------
 # Add CSS for hover tooltip
 ui.tags.style("""
@@ -349,86 +351,55 @@ ui.tags.script("""
 # 2. Slow path: load each parquet file individually and merge them together
 
 
-def _load_one_acronym(acronym: str, parquet_dir: str):
-    """
-    Load a repository parquet file and add the university name.
+# def _load_one_acronym(acronym: str, parquet_dir: str):
+#     """
+#     Load a repository parquet file and add the university name.
 
-    Parameters
-    ----------
-    acronym : str
-        University acronym (for example, ``"UCB"``).
-    parquet_dir : str
-        Subdirectory under ``PARQUET_BASE`` that contains ``repositories.parquet``.
+#     Parameters
+#     ----------
+#     acronym : str
+#         University acronym (for example, ``"UCB"``).
+#     parquet_dir : str
+#         Subdirectory under ``PARQUET_BASE`` that contains ``repositories.parquet``.
 
-    Returns
-    -------
-    pandas.DataFrame or None
-        DataFrame with the requested columns and a ``"university"`` column,
-        or ``None`` if the parquet file is missing or cannot be read.
-    """
-    repo_path = os.path.join(PARQUET_BASE, parquet_dir, "repositories.parquet")
-    if not os.path.isfile(repo_path):
-        return None
-    try:
-        # Read only needed columns for faster I/O
-        df = pd.read_parquet(repo_path, columns=[c for c in COLUMNS_TO_LOAD if c != "university"])
-    except Exception:
-        df = pd.read_parquet(repo_path)
-        df = df[[c for c in COLUMNS_TO_LOAD if c in df.columns and c != "university"]]
-    config_file = f"config/config_{acronym.replace(' ', '_')}.json"
-    if os.path.isfile(config_file):
-        try:
-            with open(config_file, encoding="utf-8") as f:
-                df["university"] = json.load(f).get("UNIVERSITY_NAME", acronym)
-        except Exception:
-            df["university"] = acronym
-    else:
-        df["university"] = acronym
-    return df
+#     Returns
+#     -------
+#     pandas.DataFrame or None
+#         DataFrame with the requested columns and a ``"university"`` column,
+#         or ``None`` if the parquet file is missing or cannot be read.
+#     """
+#     repo_path = os.path.join(PARQUET_BASE, parquet_dir, "repositories.parquet")
+#     if not os.path.isfile(repo_path):
+#         return None
+#     try:
+#         # Read only needed columns for faster I/O
+#         df = pd.read_parquet(repo_path, columns=[c for c in COLUMNS_TO_LOAD if c != "university"])
+#     except Exception:
+#         df = pd.read_parquet(repo_path)
+#         df = df[[c for c in COLUMNS_TO_LOAD if c in df.columns and c != "university"]]
+#     config_file = f"config/config_{acronym.replace(' ', '_')}.json"
+#     if os.path.isfile(config_file):
+#         try:
+#             with open(config_file, encoding="utf-8") as f:
+#                 df["university"] = json.load(f).get("UNIVERSITY_NAME", acronym)
+#         except Exception:
+#             df["university"] = acronym
+#     else:
+#         df["university"] = acronym
+#     return df
 
 
-# Fast path / local loading: only used when DATA == "local".
-if DATA == "local":
+if DATA == "remote":
+    # Usage Shiny app
+    df = read_parquet_from_s3_public("repoexplorer-data", "repositories_combined_clean.parquet")
+    df_security = read_parquet_from_s3_public("repoexplorer-data", "security_combined_clean.parquet")
+
+else:
     # Load main repositories table
-    if os.path.isfile(COMBINED_PARQUET):
-        try:
-            cload = COLUMNS_TO_LOAD + ["university"]
-            df = pd.read_parquet(COMBINED_PARQUET, columns=cload)
-            if "university" not in df.columns:
-                df["university"] = "Unknown"
-        except Exception:
-            logging.exception("Failed to load combined parquet %s", COMBINED_PARQUET)
-            df = pd.DataFrame()
-    else:
-        # Build case-insensitive map: parquet subdir name (lower) -> actual subdir name
-        _parquet_dirs = {}
-        if os.path.isdir(PARQUET_BASE):
-            for name in os.listdir(PARQUET_BASE):
-                if os.path.isdir(os.path.join(PARQUET_BASE, name)):
-                    _parquet_dirs[name.lower()] = name
-
-        df_list = []
-        with ThreadPoolExecutor(max_workers=min(8, len(ACRONYMS) or 1)) as executor:
-            submitted = []
-            for acronym in ACRONYMS:
-                key = acronym.replace(" ", "_").lower()
-                parquet_dir = _parquet_dirs.get(key)
-                if not parquet_dir:
-                    continue
-                submitted.append((executor.submit(_load_one_acronym, acronym, parquet_dir), acronym))
-            for future, acronym in submitted:
-                try:
-                    result = future.result()
-                    if result is not None:
-                        df_list.append(result)
-                    else:
-                        logging.error("Failed to load parquet for acronym %s", acronym)
-                except Exception:
-                    logging.exception("Failed to load parquet for acronym %s", acronym)
-        df = pd.concat(df_list, ignore_index=True) if df_list else pd.DataFrame()
-
-# Load security_combined table (OpenSSF scores) when using local data
-if DATA == "local":
+    cload = COLUMNS_TO_LOAD + ["university"]
+    df = pd.read_parquet(COMBINED_PARQUET, columns=cload)
+    if "university" not in df.columns:
+        df["university"] = "Unknown"
     df_security = pd.DataFrame()
     if os.path.isfile(SECURITY_PARQUET):
         try:
@@ -436,6 +407,9 @@ if DATA == "local":
         except Exception:
             logging.exception("Failed to load security parquet %s", SECURITY_PARQUET)
             df_security = pd.DataFrame()
+
+df = optimize_dtypes(df)
+
 
 # # Load organizations table
 # df_organizations = pd.DataFrame()
@@ -1225,67 +1199,47 @@ with ui.navset_pill(id="tab"):
 
 # ------------------------------------ Filtered DataFrame ----------------------------------------------
 
-@reactive.calc  
+@reactive.calc
 def filtered_df():
-    result = df.copy()
-    
-    # Apply manual filters
-    if input.university(): 
-        result = result.loc[result.university.isin(input.university())]
-    if input.type(): 
-        result = result.loc[result.type_prediction_gpt_5_mini.isin(input.type())]
-    if input.license(): 
-        result = result.loc[result.license.isin(input.license())]
-    if input.language(): 
-        result = result.loc[result.language.isin(input.language())]
+    mask = pd.Series(True, index=df.index)
+
+    if input.university():
+        mask &= df["university"].isin(input.university())
+    if input.type():
+        mask &= df["type_prediction_gpt_5_mini"].isin(input.type())
+    if input.license():
+        mask &= df["license"].isin(input.license())
+    if input.language():
+        mask &= df["language"].isin(input.language())
     if input.slider_stars():
         min_val, max_val = input.slider_stars()
-        result["stargazers_count"] = pd.to_numeric(result["stargazers_count"], errors="coerce")
-        result = result[
-            (result["stargazers_count"] >= min_val) &
-            (result["stargazers_count"] <= max_val)
-        ]
+        stars = pd.to_numeric(df["stargazers_count"], errors="coerce")
+        mask &= (stars >= min_val) & (stars <= max_val)
     if input.slider_forks():
         min_val, max_val = input.slider_forks()
-        result["forks_count"] = pd.to_numeric(result["forks_count"], errors="coerce")
-        result = result[
-            (result["forks_count"] >= min_val) &
-            (result["forks_count"] <= max_val)
-        ]
-    
+        forks = pd.to_numeric(df["forks_count"], errors="coerce")
+        mask &= (forks >= min_val) & (forks <= max_val)
     if input.slider_downloads():
         min_val, max_val = input.slider_downloads()
-        result["release_downloads"] = pd.to_numeric(result["release_downloads"], errors="coerce")
-        result = result[
-            (result["release_downloads"] >= min_val) &
-            (result["release_downloads"] <= max_val)
-        ]
-
+        downloads = pd.to_numeric(df["release_downloads"], errors="coerce")
+        mask &= (downloads >= min_val) & (downloads <= max_val)
     if input.slider_threshold():
         min_val, max_val = input.slider_threshold()
-        result["affiliation_prediction_gpt_5_mini"] = pd.to_numeric(result["affiliation_prediction_gpt_5_mini"], errors="coerce")
-        result = result[
-            (result["affiliation_prediction_gpt_5_mini"] >= min_val) &
-            (result["affiliation_prediction_gpt_5_mini"] <= max_val)
-        ]
+        aff = pd.to_numeric(df["affiliation_prediction_gpt_5_mini"], errors="coerce")
+        mask &= (aff >= min_val) & (aff <= max_val)
 
     # Apply chat filters - combine with manual filters (only when chat is active and has results)
+    result = df[mask]
+
     if ENABLE_CHAT and chat is not None:
         try:
             chat_df = chat.df()
             if chat_df is not None and len(chat_df) > 0:
-                # Get the IDs from the chat results
                 if 'id' in chat_df.columns:
                     chat_ids = set(chat_df['id'].values)
                     result = result[result['id'].isin(chat_ids)]
-                elif 'id' in result.columns:
-                    chat_indices = set(chat_df.index)
-                    result = result[result.index.isin(chat_indices)]
-                else:
-                    chat_indices = set(chat_df.index)
-                    result = result[result.index.isin(chat_indices)]
+                ...
         except Exception:
-            # If chat reset or .df() unavailable, use only manual filters
             pass
 
     return result
