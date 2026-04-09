@@ -222,7 +222,7 @@ def _make_language_combined_fig(
 
 
 # Read data from public bucket 
-def read_parquet_from_s3_public(bucket_name, object_key, columns=COLUMNS_TO_LOAD):
+def read_parquet_from_s3_public(bucket_name, object_key, columns=None):
     url = f"https://{bucket_name}.s3.amazonaws.com/{object_key}"
     return pd.read_parquet(url, columns=columns)
 
@@ -391,7 +391,7 @@ ui.tags.script("""
 
 if DATA == "remote":
     # Usage Shiny app
-    df = read_parquet_from_s3_public("repoexplorer-data", "repositories_combined_clean.parquet")
+    df = read_parquet_from_s3_public("repoexplorer-data", "repositories_combined_clean.parquet", columns=COLUMNS_TO_LOAD)
     df_security = read_parquet_from_s3_public("repoexplorer-data", "security_combined_clean.parquet")
 
 else:
