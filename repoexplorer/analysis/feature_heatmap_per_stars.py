@@ -112,7 +112,7 @@ def plot_feature_heatmap_by_star_bucket(
     
     title = (
         rf"$\bf{{Community\ Files\ by\ \#\ Stars}}$" + "\n" +
-        rf"$\bf{{DEV\ Repos}}$" + f" (Total: {total_repositories})"
+        f" (Total: {total_repositories})"
     )
     ax.set_title(
         title,

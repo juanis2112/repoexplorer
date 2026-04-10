@@ -509,7 +509,7 @@ _normalize_license_column(df)
 
 # =============================================== App UI ==========================================
 
-ui.page_opts(title="University Repositories", fillable=True)
+ui.page_opts(title="Open Source Repository Browser", fillable=True)
 
 # ======================================== Sidebar  ===============================================
 
@@ -647,7 +647,15 @@ ICONS = {
     "downloads": icon_svg("download"),
 }
 
-with ui.navset_pill(id="tab"):  
+_about_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "about.md")
+with open(_about_path, encoding="utf-8") as _f:
+    _about_md = _f.read()
+
+with ui.navset_pill(id="tab", selected="Overview"):
+    with ui.nav_panel("About"):
+        with ui.card():
+            ui.markdown(_about_md)
+
     with ui.nav_panel("Overview"):
         # Value boxes row
         with ui.layout_columns(col_widths=(3, 3, 3, 3)):
@@ -1640,12 +1648,9 @@ with ui.navset_pill(id="tab"):
                     with ui.card():
                         @render.plot
                         def plot_heatmap():
-                            dev_df = filtered_df()[
-                                filtered_df()["type_prediction_gpt_5_mini"] == "DEV"
-                            ]
                             fig, ax = plt.subplots(figsize=(8, 6))
                             plot_feature_heatmap_by_star_bucket(
-                                dev_df,
+                                filtered_df(),
                                 FEATURES,
                                 star_col="stargazers_count",
                                 ax=ax,
