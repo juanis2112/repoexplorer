@@ -80,7 +80,8 @@ def plot_contributor_count_bucket_bar(
     bars = ax.bar(counts.index.astype(str), counts.values, color=colors)
 
     ymax = max(counts.max(), 1)
-    denom = float(counts.values.sum())
+    # Robust to pyarrow-backed arrays (remote parquet reads).
+    denom = float(pd.to_numeric(counts, errors="coerce").fillna(0).to_numpy().sum())
     for bar in bars:
         h = bar.get_height()
         pct = (100.0 * h / denom) if denom > 0 else 0.0
