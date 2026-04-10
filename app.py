@@ -61,8 +61,11 @@ if "OPENAI_MODEL" not in os.environ:
 # Data/parquet/{acronym}/repositories.parquet (case-insensitive acronym match)
 # Optional fast path: Data/parquet/repositories_combined.parquet (single pre-merged file)
 PARQUET_BASE = "Data/parquet"
-COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_combined_clean.parquet")
-SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_combined_clean.parquet")
+# COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_combined_clean.parquet")
+# SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_combined_clean.parquet")
+
+COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_reduced_combined_stars_gt_0.parquet")
+SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_reduced_combined_stars_gt_0.parquet")
 # ORGANIZATIONS_PARQUET = os.path.join(PARQUET_BASE, "organizations_combined_clean.parquet")
 # CONTRIBUTORS_PARQUET = os.path.join(PARQUET_BASE, "contributors_combined_clean.parquet")
 # COMMITS_PARQUET = os.path.join(PARQUET_BASE, "commits_combined_clean.parquet")
@@ -453,8 +456,8 @@ ui.tags.script("""
 
 if DATA == "remote":
     # Usage Shiny app
-    df = read_parquet_from_s3_public("repoexplorer-data", "repositories_combined_clean.parquet", columns=COLUMNS_TO_LOAD)
-    df_security = read_parquet_from_s3_public("repoexplorer-data", "security_combined_clean.parquet")
+    df = read_parquet_from_s3_public("repoexplorer-data", "repositories_reduced_combined_stars_gt_0.parquet", columns=COLUMNS_TO_LOAD)
+    df_security = read_parquet_from_s3_public("repoexplorer-data", "security_reduced_combined_stars_gt_0.parquet")
 
 else:
     # Load main repositories table
