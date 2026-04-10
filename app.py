@@ -23,6 +23,14 @@ from repoexplorer.analysis.feature_counts import plot_feature_counts
 from repoexplorer.analysis.university_distribution import plot_university_distribution
 from repoexplorer.analysis.feature_heatmap_per_stars import plot_feature_heatmap_by_star_bucket
 from repoexplorer.analysis.commit_history import plot_commit_history
+from repoexplorer.analysis.stars_distribution_bar import plot_stars_distribution_bar
+from repoexplorer.analysis.forks_distribution_bar import plot_forks_distribution_bar
+from repoexplorer.analysis.release_downloads_distribution_bar import (
+    plot_release_downloads_distribution_bar,
+)
+from repoexplorer.analysis.contributors_distribution_bar import (
+    plot_contributors_distribution_bar,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -104,6 +112,29 @@ def _safe_int_metric(v):
         return str(int(float(v)))
     except (ValueError, TypeError):
         return "N/A"
+
+
+def _format_thousands_approx(n) -> str:
+    """Round counts for display (e.g. 52_000 -> '52K', 900 -> '900')."""
+    if _is_missing_scalar(n):
+        return "—"
+    try:
+        x = float(n)
+    except (TypeError, ValueError):
+        return "—"
+    if pd.isna(x):
+        return "—"
+    x = int(round(x))
+    if x == 0:
+        return "0"
+    sign = ""
+    if x < 0:
+        sign = "-"
+        x = abs(x)
+    if x < 1000:
+        return f"{sign}{x}"
+    k = int(round(x / 1000.0))
+    return f"{sign}{k}K"
 
 
 def _has_nonempty_text(v):
@@ -569,7 +600,7 @@ def reset_all_filters():
 #------------------------------------ Overview ----------------------------------------------
 
 
-# Icons for Overview value boxes
+# Icons for Overview / Impact value boxes
 ICONS = {
     "repos": icon_svg("code-branch"),
     "contributors": icon_svg("users"),
@@ -577,6 +608,9 @@ ICONS = {
     "openssf": icon_svg("shield-halved"),
     "busfactor": icon_svg("bus"),
     "license": icon_svg("id-card"),
+    "stars": icon_svg("star"),
+    "forks": icon_svg("code-fork"),
+    "downloads": icon_svg("download"),
 }
 
 with ui.navset_pill(id="tab"):  
@@ -1130,7 +1164,238 @@ with ui.navset_pill(id="tab"):
                     ),
                     col_widths=(4, 6),
                 )
-        
+
+    # ------------------------------------ Impact (bucket distributions) ------------------------------
+    with ui.nav_panel("Impact"):
+        with ui.layout_columns(col_widths=(3, 3, 3, 3)):
+            with ui.value_box(showcase=ICONS["stars"]):
+                "Total stars"
+                @render.express
+                def impact_total_stars():
+                    data = filtered_df()
+                    if "stargazers_count" not in data.columns:
+                        "—"
+                    else:
+                        s = pd.to_numeric(data["stargazers_count"], errors="coerce")
+                        int(s.dropna().sum()) if s.notna().any() else 0
+
+            with ui.value_box(showcase=ICONS["forks"]):
+                "Total forks"
+                @render.express
+                def impact_total_forks():
+                    data = filtered_df()
+                    if "forks_count" not in data.columns:
+                        "—"
+                    else:
+                        s = pd.to_numeric(data["forks_count"], errors="coerce")
+                        int(s.dropna().sum()) if s.notna().any() else 0
+
+            with ui.value_box(showcase=ICONS["downloads"]):
+                "Total downloads"
+                @render.express
+                def impact_total_downloads():
+                    data = filtered_df()
+                    if "release_downloads" not in data.columns:
+                        "—"
+                    else:
+                        s = pd.to_numeric(data["release_downloads"], errors="coerce")
+                        int(s.dropna().sum()) if s.notna().any() else 0
+
+            with ui.value_box(showcase=ICONS["contributors"]):
+                "Total contributors"
+                @render.express
+                def impact_total_contributors():
+                    data = filtered_df()
+                    if "contributor_count" not in data.columns:
+                        "—"
+                    else:
+                        s = pd.to_numeric(data["contributor_count"], errors="coerce")
+                        int(s.dropna().sum()) if s.notna().any() else 0
+
+        with ui.layout_columns(col_widths=(5, 7)):
+            with ui.card():
+                ui.markdown(
+                    "**Impact Indicators per University**"
+                )
+                @render.data_frame
+                def impact_leaderboard_table():
+                    data = filtered_df()
+                    _cols = [
+                        "University",
+                        "Total stars",
+                        "Total forks",
+                        "Total downloads",
+                        "Total contributors",
+                    ]
+                    if data.empty:
+                        return render.DataGrid(pd.DataFrame(columns=_cols))
+
+                    work = data.copy()
+                    if "university" in work.columns:
+                        work["_uni"] = work["university"].fillna("Unknown").astype(str)
+                    else:
+                        work["_uni"] = "Unknown"
+
+                    rows = []
+                    for uni, grp in work.groupby("_uni", dropna=False):
+                        stars = (
+                            pd.to_numeric(grp["stargazers_count"], errors="coerce")
+                            if "stargazers_count" in grp.columns
+                            else pd.Series(dtype=float)
+                        ).sum()
+                        forks = (
+                            pd.to_numeric(grp["forks_count"], errors="coerce")
+                            if "forks_count" in grp.columns
+                            else pd.Series(dtype=float)
+                        ).sum()
+                        downloads = (
+                            pd.to_numeric(grp["release_downloads"], errors="coerce")
+                            if "release_downloads" in grp.columns
+                            else pd.Series(dtype=float)
+                        ).sum()
+                        contributors = (
+                            pd.to_numeric(grp["contributor_count"], errors="coerce")
+                            if "contributor_count" in grp.columns
+                            else pd.Series(dtype=float)
+                        ).sum()
+                        rows.append((uni, stars, forks, downloads, contributors))
+
+                    out = pd.DataFrame(
+                        rows,
+                        columns=[
+                            "University",
+                            "Total stars",
+                            "Total forks",
+                            "Total downloads",
+                            "Total contributors",
+                        ],
+                    )
+                    out["Total stars"] = out["Total stars"].fillna(0)
+                    out["Total forks"] = out["Total forks"].fillna(0)
+                    out["Total downloads"] = out["Total downloads"].fillna(0)
+                    out["Total contributors"] = out["Total contributors"].fillna(0)
+                    out = out.sort_values("Total stars", ascending=False)
+                    for c in (
+                        "Total stars",
+                        "Total forks",
+                        "Total downloads",
+                        "Total contributors",
+                    ):
+                        out[c] = out[c].map(_format_thousands_approx)
+
+                    return render.DataGrid(
+                        out,
+                        width="100%",
+                        styles=[
+                            {
+                                "location": "body",
+                                "style": {"fontSize": "12px"},
+                            },
+                            {
+                                "location": "body",
+                                "cols": [0],
+                                "style": {"minWidth": "32%", "width": "32%"},
+                            },
+                            {
+                                "location": "body",
+                                "cols": [1],
+                                "style": {
+                                    "minWidth": "17%",
+                                    "width": "17%",
+                                    "textAlign": "right",
+                                },
+                            },
+                            {
+                                "location": "body",
+                                "cols": [2],
+                                "style": {
+                                    "minWidth": "17%",
+                                    "width": "17%",
+                                    "textAlign": "right",
+                                },
+                            },
+                            {
+                                "location": "body",
+                                "cols": [3],
+                                "style": {
+                                    "minWidth": "17%",
+                                    "width": "17%",
+                                    "textAlign": "right",
+                                },
+                            },
+                            {
+                                "location": "body",
+                                "cols": [4],
+                                "style": {
+                                    "minWidth": "17%",
+                                    "width": "17%",
+                                    "textAlign": "right",
+                                },
+                            },
+                        ],
+                    )
+
+            with ui.div():
+                with ui.layout_columns():
+                    with ui.card():
+                        @render.plot
+                        def plot_impact_stars():
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            plot_stars_distribution_bar(
+                                filtered_df(),
+                                acronym="",
+                                ax=ax,
+                                label_size=9,
+                                title_size=10,
+                                textprops=9,
+                            )
+                            return fig
+
+                    with ui.card():
+                        @render.plot
+                        def plot_impact_forks():
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            plot_forks_distribution_bar(
+                                filtered_df(),
+                                acronym="",
+                                ax=ax,
+                                label_size=9,
+                                title_size=10,
+                                textprops=9,
+                            )
+                            return fig
+
+                with ui.layout_columns():
+                    with ui.card():
+                        @render.plot
+                        def plot_impact_downloads():
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            plot_release_downloads_distribution_bar(
+                                filtered_df(),
+                                acronym="",
+                                ax=ax,
+                                label_size=9,
+                                title_size=10,
+                                textprops=9,
+                            )
+                            return fig
+
+                    with ui.card():
+                        @render.plot
+                        def plot_impact_contributors():
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            plot_contributors_distribution_bar(
+                                filtered_df(),
+                                acronym="",
+                                ax=ax,
+                                label_size=9,
+                                title_size=10,
+                                textprops=9,
+                            )
+                            return fig
+
+    #------------------------------------ Insights ----------------------------------------------
+     
     with ui.nav_panel("Insights"):
         # First row: feature counts per type & license distribution
         with ui.layout_columns():
@@ -1229,7 +1494,7 @@ def filtered_df():
         mask &= (aff >= min_val) & (aff <= max_val)
 
     # Apply chat filters - combine with manual filters (only when chat is active and has results)
-    result = df[mask]
+    result = df.loc[mask]
 
     if ENABLE_CHAT and chat is not None:
         try:
