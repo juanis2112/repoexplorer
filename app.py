@@ -9,6 +9,7 @@ from shiny import session as shiny_session
 from shiny import ui as sui
 from faicons import icon_svg
 import matplotlib.pyplot as plt
+import seaborn as sns
 import io
 import json
 import logging
@@ -30,6 +31,12 @@ from repoexplorer.analysis.release_downloads_distribution_bar import (
 )
 from repoexplorer.analysis.contributors_distribution_bar import (
     plot_contributors_distribution_bar,
+)
+from repoexplorer.analysis.bus_factor_distribution_bar import (
+    plot_bus_factor_distribution_bar,
+)
+from repoexplorer.analysis.contributor_count_bucket_bar import (
+    plot_contributor_count_bucket_bar,
 )
 from dotenv import load_dotenv
 
@@ -79,6 +86,30 @@ ACRONYMS = [
 FEATURES = [
     'description', 'readme', 'license', 'code_of_conduct_file',
     'contributing', 'security_policy', 'issue_templates', 'pull_request_template'
+]
+
+# OpenSSF scorecard-style columns in ``df_security`` (joined to repos on ``html_url``).
+# Display label, parquet column name (same as repository detail Security tab).
+SECURITY_SCORECARD_METRICS = [
+    ("Binary artifacts", "Binary_Artifacts"),
+    ("Branch protection", "Branch_Protection"),
+    ("CI tests", "CI_Tests"),
+    ("CII Best Practices", "CII_Best_Practices"),
+    ("Code review", "Code_Review"),
+    ("Contributors", "Contributors"),
+    ("Dangerous workflow", "Dangerous_Workflow"),
+    ("Dependency update tool", "Dependency_Update_Tool"),
+    ("Fuzzing", "Fuzzing"),
+    ("License (scorecard)", "License"),
+    ("Maintained", "Maintained"),
+    ("Packaging", "Packaging"),
+    ("Pinned dependencies", "Pinned_Dependencies"),
+    ("SAST", "SAST"),
+    ("Security policy (scorecard)", "Security_Policy"),
+    ("Signed releases", "Signed_Releases"),
+    ("Token permissions", "Token_Permissions"),
+    ("Vulnerabilities", "Vulnerabilities"),
+    ("Total score", "Total_Score"),
 ]
 
 
@@ -830,36 +861,110 @@ with ui.navset_pill(id="tab"):
                     buf.seek(0)
                     plt.close(fig)
                     yield buf.read()
+        
+        with ui.layout_columns(col_widths=(6, 6)):
+            with ui.card():
+                @render.plot
+                def plot_license():
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    plot_license_distribution_by_type(
+                        filtered_df(),
+                        acronym="",
+                        ax=ax,
+                        label_size=9,
+                        title_size=12,
+                        textprops=9,
+                        other_thres=0.009,
+                    )
+
+                @render.download(
+                    filename=lambda: f"license_distribution_by_type_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.png"
+                )
+                def download_plot_license_by_type():
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    plot_license_distribution_by_type(
+                        filtered_df(),
+                        acronym="",
+                        ax=ax,
+                        label_size=9,
+                        title_size=12,
+                        textprops=9,
+                        other_thres=0.009,
+                    )
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+                    buf.seek(0)
+                    plt.close(fig)
+                    yield buf.read()
+
+            with ui.card():
+                @render.plot
+                def plot_language():
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    plot_language_distribution_by_type(
+                        filtered_df(),
+                        acronym="",
+                        ax=ax,
+                        label_size=9,
+                        title_size=12,
+                        props=9,
+                        other_thres=0.02,
+                    )
+                @render.download(
+                    filename=lambda: f"language_distribution_by_type_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.png"
+                )
+                def download_plot_language_by_type():
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    plot_language_distribution_by_type(
+                        filtered_df(),
+                        acronym="",
+                        ax=ax,
+                        label_size=9,
+                        title_size=12,
+                        props=9,
+                        other_thres=0.02,
+                    )
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+                    buf.seek(0)
+                    plt.close(fig)
+                    yield buf.read()
+    
 
 #------------------------------------ Repositories ----------------------------------------------
     
     
     with ui.nav_panel("Repositories"):
         with ui.card(class_="repo-data-card"):
-            ui.input_text("table_search", "Search", placeholder="Search repositories...", width="100%")
-            @render.data_frame  
+            ui.tags.div(
+                ui.tags.div(
+                    ui.input_text(
+                        "table_search",
+                        "Search",
+                        placeholder="Search repositories...",
+                        width="100%",
+                    ),
+                    style="flex: 1; min-width: 220px;",
+                ), 
+            )
+            @render.data_frame
             def display_df():
-                data = filtered_df().drop(columns=["readme", "contributing", "contributors", 'code_of_conduct_file', 'contributing', 'security_policy', 'issue_templates', 'pull_request_template'], errors="ignore")
-                
-                # Apply search filter if search term is provided
-                if input.table_search() and len(input.table_search().strip()) > 0:
-                    search_term = input.table_search().strip().lower()
-                    # Search across multiple text columns
-                    searchable_columns = ['full_name', 'owner', 'description', 'language', 'license', 'university', 'affiliation_prediction_gpt_5_mini']
-                    mask = pd.Series([False] * len(data), index=data.index)
-                    
-                    for col in searchable_columns:
-                        if col in data.columns:
-                            # Convert to string and search (case-insensitive)
-                            mask |= data[col].astype(str).str.lower().str.contains(search_term, na=False)
-                    
-                    data = data[mask]
-                
+                data = repositories_table_df()
                 return render.DataGrid(
                     data,
                     height="500px",
                     selection_mode="row",
                 )
+
+            @render.download(
+                filename=lambda: f"repositories_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            )
+            def download_repositories_csv():
+                out_df = repositories_table_df()
+                buf = io.BytesIO()
+                out_df.to_csv(buf, index=False, encoding="utf-8")
+                buf.seek(0)
+                yield buf.getvalue()
         with ui.card():
             @render.ui
             def show_clicked():
@@ -868,10 +973,11 @@ with ui.navset_pill(id="tab"):
                 if not selected_rows:
                     return ""
 
-                # Row index refers to the displayed (filtered) table, not the full df
-                row_idx = selected_rows[0]
-                data = filtered_df()
-                selected = data.iloc[row_idx]
+                # Row position in the grid matches repositories_table_df (search + column drops).
+                view = repositories_table_df()
+                row_pos = selected_rows[0]
+                sel = filtered_df().loc[view.index[row_pos]]
+                selected = sel.iloc[0] if isinstance(sel, pd.DataFrame) else sel
 
                 _readme_md = _safe_markdown_text(selected.get("readme"))
                 _contributing_md = _safe_markdown_text(selected.get("contributing"))
@@ -1394,72 +1500,277 @@ with ui.navset_pill(id="tab"):
                             )
                             return fig
 
-    #------------------------------------ Insights ----------------------------------------------
-     
-    with ui.nav_panel("Insights"):
-        # First row: feature counts per type & license distribution
-        with ui.layout_columns():
+    # ------------------------------------ Sustainability ----------------------------------------------
+    with ui.nav_panel("Sustainability"):
+        with ui.layout_columns(col_widths=(5, 7)):
             with ui.card():
-                @render.plot
-                def plot_files():
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    plot_feature_counts_per_type(
-                        filtered_df(),
-                        FEATURES,
-                        acronym="",
-                        ax=ax,
-                        label_size=8,
-                        title_size=8,
-                        textprops=8,
+                ui.markdown(
+                    "**Sustainability indicators per University**"
+                )
+                @render.data_frame
+                def sustainability_leaderboard_table():
+                    data = filtered_df()
+                    _cols = [
+                        "University",
+                        "Average # Contributors",
+                        "Average bus factor",
+                    ]
+                    if data.empty:
+                        return render.DataGrid(pd.DataFrame(columns=_cols))
+
+                    work = data.copy()
+                    if "university" in work.columns:
+                        work["_uni"] = work["university"].fillna("Unknown").astype(str)
+                    else:
+                        work["_uni"] = "Unknown"
+
+                    rows = []
+                    for uni, grp in work.groupby("_uni", dropna=False):
+                        cc = (
+                            pd.to_numeric(grp["contributor_count"], errors="coerce")
+                            if "contributor_count" in grp.columns
+                            else pd.Series(dtype=float)
+                        )
+                        bf = (
+                            pd.to_numeric(grp["bus_factor"], errors="coerce")
+                            if "bus_factor" in grp.columns
+                            else pd.Series(dtype=float)
+                        )
+                        avg_c = cc.mean() if cc.notna().any() else float("nan")
+                        avg_b = bf.mean() if bf.notna().any() else float("nan")
+                        rows.append((uni, avg_c, avg_b))
+
+                    out = pd.DataFrame(
+                        rows,
+                        columns=["University", "_avg_contrib", "_avg_bus"],
                     )
-                    return fig
+                    out = out.sort_values(
+                        "_avg_contrib", ascending=False, na_position="last"
+                    )
+                    out["Average # Contributors"] = out["_avg_contrib"].map(
+                        lambda x: f"{x:.2f}" if pd.notna(x) else "—"
+                    )
+                    out["Average bus factor"] = out["_avg_bus"].map(
+                        lambda x: f"{x:.2f}" if pd.notna(x) else "—"
+                    )
+                    out = out[
+                        ["University", "Average # Contributors", "Average bus factor"]
+                    ]
+
+                    return render.DataGrid(
+                        out,
+                        width="100%",
+                        styles=[
+                            {
+                                "location": "body",
+                                "style": {"fontSize": "12px"},
+                            },
+                            {
+                                "location": "body",
+                                "cols": [0],
+                                "style": {"minWidth": "40%", "width": "40%"},
+                            },
+                            {
+                                "location": "body",
+                                "cols": [1],
+                                "style": {
+                                    "minWidth": "30%",
+                                    "width": "30%",
+                                    "textAlign": "right",
+                                },
+                            },
+                            {
+                                "location": "body",
+                                "cols": [2],
+                                "style": {
+                                    "minWidth": "30%",
+                                    "width": "30%",
+                                    "textAlign": "right",
+                                },
+                            },
+                        ],
+                    )
+
+            with ui.div():
+                with ui.layout_columns(col_widths=(6, 6)):
+                    with ui.value_box(showcase=ICONS["busfactor"]):
+                        "Average bus factor"
+                        @render.express
+                        def sustainability_value_avg_bus_factor():
+                            data = filtered_df()
+                            col = "bus_factor"
+                            if col not in data.columns:
+                                "—"
+                            else:
+                                v = pd.to_numeric(data[col], errors="coerce").mean()
+                                f"{v:.2f}" if not pd.isna(v) else "—"
+
+                    with ui.value_box(showcase=ICONS["contributors"]):
+                        "Average # contributors"
+                        @render.express
+                        def sustainability_value_avg_contributors():
+                            data = filtered_df()
+                            if "contributor_count" not in data.columns:
+                                "—"
+                            else:
+                                v = pd.to_numeric(
+                                    data["contributor_count"], errors="coerce"
+                                ).mean()
+                                f"{v:.2f}" if not pd.isna(v) else "—"
+
+                with ui.layout_columns():
+                    with ui.card():
+                        @render.plot
+                        def plot_files():
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            plot_feature_counts_per_type(
+                                filtered_df(),
+                                FEATURES,
+                                acronym="",
+                                ax=ax,
+                                label_size=8,
+                                title_size=10,
+                                textprops=8,
+                            )
+                            return fig
+
+                    with ui.card():
+                        @render.plot
+                        def plot_heatmap():
+                            dev_df = filtered_df()[
+                                filtered_df()["type_prediction_gpt_5_mini"] == "DEV"
+                            ]
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            plot_feature_heatmap_by_star_bucket(
+                                dev_df,
+                                FEATURES,
+                                star_col="stargazers_count",
+                                ax=ax,
+                                label_size=8,
+                                title_size=10,
+                                annotations_size=8,
+                            )
+                            return fig
+
+                with ui.layout_columns():
+                    with ui.card():
+                        @render.plot
+                        def plot_bus_factor_distribution():
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            plot_bus_factor_distribution_bar(
+                                filtered_df(),
+                                acronym="",
+                                ax=ax,
+                                label_size=8,
+                                title_size=10,
+                                textprops=8,
+                            )
+                            return fig
+
+                    with ui.card():
+                        @render.plot
+                        def plot_contributor_count_buckets():
+                            fig, ax = plt.subplots(figsize=(8, 6))
+                            plot_contributor_count_bucket_bar(
+                                filtered_df(),
+                                acronym="",
+                                ax=ax,
+                                label_size=8,
+                                title_size=10,
+                                textprops=8,
+                            )
+                            return fig
+
+    # ------------------------------------ Security (scorecard table) --------------------------------
+    with ui.nav_panel("Security"):
+        with ui.layout_columns(col_widths=(8, 4)):
+            with ui.card():
+                ui.markdown(
+                    "**Security scorecard by repository** ([OpenSSF Scorecard](https://scorecard.dev/))"
+                )
+                @render.data_frame
+                def security_scorecard_table():
+                    out = security_repositories_table_df()
+                    if out.empty:
+                        return render.DataGrid(out)
+                    return render.DataGrid(
+                        out,
+                        width="100%",
+                        height="650px",
+                        styles=[
+                            {
+                                "location": "body",
+                                "style": {"fontSize": "12px"},
+                            },
+                        ],
+                    )
 
             with ui.card():
+                ui.markdown(
+                    "**Average score per Security Metric**"
+                )
                 @render.plot
-                def plot_license():
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    plot_license_distribution_by_type(
-                        filtered_df(),
-                        acronym="",
-                        ax=ax,
-                        label_size=8,
-                        title_size=8,
-                        textprops=8,
-                        other_thres=0.009,
-                    )
-                    return fig
+                def security_metric_averages_heatmap():
+                    df_avg = security_metric_averages_df()
+                    n = len(df_avg)
+                    fig_h = max(7.0, 0.38 * n + 1.2)
+                    # Narrow width → less-wide “Average” cells (heatmap column)
+                    fig, ax = plt.subplots(figsize=(3.5, fig_h))
+                    if df_avg.empty or df_avg["Average"].notna().sum() == 0:
+                        ax.text(
+                            0.5,
+                            0.5,
+                            "No numeric scores to average\n(after excluding −1)",
+                            ha="center",
+                            va="center",
+                            transform=ax.transAxes,
+                            fontsize=12,
+                        )
+                        ax.set_axis_off()
+                        return fig
 
-        # Second row: language distribution & feature heatmap
-        with ui.layout_columns():
-            with ui.card():
-                @render.plot
-                def plot_language():
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    plot_language_distribution_by_type(
-                        filtered_df(),
-                        acronym="",
-                        ax=ax,
-                        label_size=8,
-                        title_size=8,
-                        props=7,
-                        other_thres=0.02,
+                    plot_mat = df_avg.set_index("Metric")[["Average"]]
+                    _ann = []
+                    for metric, row in plot_mat.iterrows():
+                        v = row["Average"]
+                        if str(metric).strip() == "":
+                            _ann.append("")
+                        elif pd.notna(v):
+                            _ann.append(f"{v:.2f}")
+                        else:
+                            _ann.append("—")
+                    annot_mat = pd.DataFrame(
+                        _ann, index=plot_mat.index, columns=["Average"]
                     )
-                    return fig
-
-            with ui.card():
-                @render.plot
-                def plot_heatmap():
-                    dev_df = filtered_df()[filtered_df()["type_prediction_gpt_5_mini"] == "DEV"]
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    plot_feature_heatmap_by_star_bucket(
-                        dev_df,
-                        FEATURES,
-                        star_col="stargazers_count",
+                    cmap = plt.colormaps["RdYlGn"]
+                    mask = plot_mat.isna()
+                    sns.heatmap(
+                        plot_mat,
+                        annot=annot_mat,
+                        fmt="",
+                        cmap=cmap,
+                        vmin=0,
+                        vmax=10,
+                        mask=mask,
+                        linewidths=0.6,
+                        linecolor="white",
                         ax=ax,
-                        label_size=8,
-                        title_size=8,
-                        annotations_size=8,
+                        cbar=False,
                     )
+                    ax.set_xlabel("")
+                    ax.set_ylabel("")
+                    ax.set_title("Metric averages")
+                    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=9)
+                    plt.setp(ax.get_xticklabels(), fontsize=8)
+                    # Spacer row adds gap before “Total score”; hide its tick/label (no empty tick).
+                    for i, lab in enumerate(ax.get_yticklabels()):
+                        if not lab.get_text().strip():
+                            lab.set_visible(False)
+                            yticks = ax.yaxis.get_major_ticks()
+                            if i < len(yticks):
+                                yticks[i].tick1line.set_visible(False)
+                                yticks[i].tick2line.set_visible(False)
+                    fig.tight_layout()
                     return fig
 
 # ------------------------------------ Filtered DataFrame ----------------------------------------------
@@ -1500,12 +1811,126 @@ def filtered_df():
         try:
             chat_df = chat.df()
             if chat_df is not None and len(chat_df) > 0:
-                if 'id' in chat_df.columns:
-                    chat_ids = set(chat_df['id'].values)
-                    result = result[result['id'].isin(chat_ids)]
-                ...
+                if "id" in chat_df.columns:
+                    chat_ids = set(chat_df["id"].values)
+                    result = result[result["id"].isin(chat_ids)]
+                else:
+                    chat_indices = set(chat_df.index)
+                    result = result[result.index.isin(chat_indices)]
         except Exception:
             pass
 
     return result
+
+
+_REPO_TABLE_DROP_COLS = [
+    "readme",
+    "contributing",
+    "contributors",
+    "code_of_conduct_file",
+    "security_policy",
+    "issue_templates",
+    "pull_request_template",
+]
+
+
+@reactive.calc
+def repositories_table_df():
+    """Same rows/columns as the Repositories DataGrid (filters + search)."""
+    data = filtered_df().drop(columns=_REPO_TABLE_DROP_COLS, errors="ignore")
+    if input.table_search() and len(input.table_search().strip()) > 0:
+        search_term = input.table_search().strip().lower()
+        searchable_columns = [
+            "full_name",
+            "owner",
+            "description",
+            "language",
+            "license",
+            "university",
+            "affiliation_prediction_gpt_5_mini",
+        ]
+        mask = pd.Series([False] * len(data), index=data.index)
+        for col in searchable_columns:
+            if col in data.columns:
+                mask |= data[col].astype(str).str.lower().str.contains(
+                    search_term, na=False
+                )
+        data = data[mask]
+    return data
+
+
+@reactive.calc
+def security_repositories_table_df():
+    """
+    One row per filtered repository: ``html_url`` plus scorecard columns from
+    ``df_security`` (left join on ``html_url``).
+    """
+    base = filtered_df().drop(columns=_REPO_TABLE_DROP_COLS, errors="ignore")
+    if "html_url" in base.columns:
+        work = base[["html_url"]].copy()
+    else:
+        work = pd.DataFrame(index=base.index)
+        work["html_url"] = pd.NA
+
+    metric_pairs = [
+        (d, s)
+        for d, s in SECURITY_SCORECARD_METRICS
+        if s in df_security.columns
+    ]
+    can_merge = (
+        not df_security.empty
+        and "html_url" in df_security.columns
+        and bool(metric_pairs)
+    )
+
+    if can_merge:
+        s_cols = ["html_url"] + [s for _, s in metric_pairs]
+        sec = df_security[s_cols].drop_duplicates(subset=["html_url"], keep="first")
+        out = work.merge(sec, on="html_url", how="left")
+        out = out.rename(columns={s: d for d, s in metric_pairs})
+    else:
+        out = work.copy()
+
+    for d, _ in SECURITY_SCORECARD_METRICS:
+        if d not in out.columns:
+            out[d] = pd.NA
+
+    _total_col = "Total score"
+    if _total_col in out.columns:
+        out = out.sort_values(
+            by=_total_col,
+            key=lambda s: pd.to_numeric(s, errors="coerce"),
+            ascending=False,
+            na_position="last",
+        )
+
+    metric_displays = [d for d, _ in SECURITY_SCORECARD_METRICS]
+    return out[["html_url"] + metric_displays]
+
+
+@reactive.calc
+def security_metric_averages_df():
+    """
+    One row per scorecard metric: mean of numeric values, excluding −1 and non-finite.
+    """
+    wide = security_repositories_table_df()
+    rows = []
+    for disp, _src in SECURITY_SCORECARD_METRICS:
+        if disp not in wide.columns:
+            rows.append((disp, float("nan")))
+            continue
+        s = pd.to_numeric(wide[disp], errors="coerce")
+        s = s[s.notna() & (s != -1)]
+        avg = float(s.mean()) if len(s) > 0 else float("nan")
+        rows.append((disp, avg))
+    out = pd.DataFrame(rows, columns=["Metric", "Average"])
+    total_mask = out["Metric"].eq("Total score")
+    main = out.loc[~total_mask].sort_values(
+        "Average", ascending=False, na_position="last"
+    )
+    total_row = out.loc[total_mask]
+    if total_row.empty:
+        return main
+    sep_row = pd.DataFrame([{"Metric": " ", "Average": float("nan")}])
+    return pd.concat([main, sep_row, total_row], ignore_index=True)
 
