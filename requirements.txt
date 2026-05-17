@@ -11,5 +11,7 @@ seaborn>=0.13.2
 faicons==0.2.2
 adjustText>=0.8.0
 shiny>=1.4.0
+altair>=5.4.0
+vl-convert-python>=1.7.0
 pyarrow>=23.0.1
 querychat>=0.1.0
