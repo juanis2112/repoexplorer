@@ -15,7 +15,7 @@ import io
 import json
 import logging
 import querychat as qc
-from repoexplorer.analysis.type_distribution import plot_type_distribution
+from repoexplorer.analysis.type_distribution import plot_type_distribution, plot_type_distribution_altair
 from repoexplorer.analysis.language_distribution_by_type import plot_language_distribution_by_type
 from repoexplorer.analysis.language_distribution import plot_language_distribution
 from repoexplorer.analysis.license_distribution_by_type import plot_license_distribution_by_type
@@ -761,36 +761,18 @@ with ui.navset_pill(id="tab", selected="Overview"):
                     )
                     return chart
 
-        with ui.layout_columns(col_widths=(4, 4, 4)):  
+        with ui.layout_columns(col_widths=(4, 4, 4)):
             with ui.card():
-                @render.plot
+                @render_altair
                 def plot_type():
-                    fig, ax = plt.subplots(figsize=(8,6))
-                    plot_type_distribution(
-                        filtered_df(), 
-                        acronym="University", 
-                        ax=ax, 
-                        label_size=10, 
+                    return plot_type_distribution_altair(
+                        filtered_df(),
+                        acronym="",
+                        label_size=10,
                         title_size=12,
-                        textprops=8)
-                    return fig
+                        textprops=8,
+                    )
 
-                @render.download(filename=lambda: f"project_distribution_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.png")
-                def download_plot_type_file():
-                    fig, ax = plt.subplots(figsize=(8,6))
-                    plot_type_distribution(
-                        filtered_df(), 
-                        acronym="", 
-                        ax=ax, 
-                        label_size=11, 
-                        title_size=12,
-                        textprops=10)
-                    # Save figure to bytes
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-                    buf.seek(0)
-                    plt.close(fig)
-                    yield buf.read()
             with ui.card():
                 @render.plot
                 def plot_language_combined():
@@ -1269,7 +1251,7 @@ with ui.navset_pill(id="tab", selected="Overview"):
         with ui.layout_columns(col_widths=(3, 3, 3, 3)):
             with ui.value_box(showcase=ICONS["stars"]):
                 "Total stars"
-                @render.express
+                @render.express #??
                 def impact_total_stars():
                     data = filtered_df()
                     if "stargazers_count" not in data.columns:
@@ -1336,6 +1318,7 @@ with ui.navset_pill(id="tab", selected="Overview"):
                         work["_uni"] = "Unknown"
 
                     rows = []
+                    #groupby(...).agg('sum')
                     for uni, grp in work.groupby("_uni", dropna=False):
                         stars = (
                             pd.to_numeric(grp["stargazers_count"], errors="coerce")

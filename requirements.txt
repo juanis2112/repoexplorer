@@ -15,4 +15,6 @@ altair>=5.4.0
 vl-convert-python>=1.7.0
 pyarrow>=23.0.1
 querychat>=0.1.0
+altair
+vl-convert-python
 shinywidgets
