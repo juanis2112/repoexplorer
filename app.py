@@ -7,6 +7,7 @@ from shiny.express import input, ui, render
 from shiny import reactive
 from shiny import session as shiny_session
 from shiny import ui as sui
+from shinywidgets import render_altair
 from faicons import icon_svg
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -747,37 +748,18 @@ with ui.navset_pill(id="tab", selected="Overview"):
                         ],
                     )
             
-            with ui.card():
-                @render.plot
+            with ui.card(height="450px"):
+                @render_altair
                 def plot_files_combined():
-                    return _make_feature_counts_combined_fig(
+                    chart = plot_feature_counts_altair(
                         filtered_df(),
                         FEATURES,
                         acronym="",
-                        figsize=(8, 6),
                         label_size=10,
                         title_size=12,
                         textprops=8,
                     )
-
-                @render.download(
-                    filename=lambda: f"community_files_presence_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.png"
-                )
-                def download_plot_files_combined():
-                    fig = _make_feature_counts_combined_fig(
-                        filtered_df(),
-                        FEATURES,
-                        acronym="",
-                        figsize=(8, 6),
-                        label_size=11,
-                        title_size=12,
-                        textprops=10,
-                    )
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-                    buf.seek(0)
-                    plt.close(fig)
-                    yield buf.read()
+                    return chart
 
         with ui.layout_columns(col_widths=(4, 4, 4)):  
             with ui.card():
