@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-    
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex
+import altair as alt
 import random
 
 def plot_feature_counts(
@@ -145,3 +146,125 @@ def plot_feature_counts(
         plt.savefig(f'plots/{acronym}/CountPerFeatureTop.png', dpi=300)
 
     return order, feature_colors
+
+def plot_feature_counts_altair(
+    data,
+    features,
+    acronym="",
+    label_size=8,
+    title_size=12,
+    textprops=8,
+):
+    """
+    Altair version of the combined feature-counts chart for on-screen rendering
+    and PNG download.
+    """
+    feature_display_names = {
+        "description": "Description",
+        "readme": "README",
+        "license": "License",
+        "code_of_conduct_file": "Code of Conduct",
+        "contributing": "Contributing Guide",
+        "security_policy": "Security Policy",
+        "issue_templates": "Issue Templates",
+        "pull_request_template": "PR Template",
+    }
+
+    width = "container"
+    height = "container"
+
+    if data is None or data.empty:
+        return (
+            alt.Chart(pd.DataFrame({"Feature": [], "Count": []}))
+            .mark_bar()
+            .properties(width=width, height=height, title="Community Files Presence")
+        )
+
+    feature_counts_raw = data[features].notna().sum()
+    total_repositories = len(data)
+    feature_counts = pd.Series(
+        {feature_display_names[k]: v for k, v in feature_counts_raw.items()}
+    )
+    order = feature_counts.sort_values().index.tolist()
+
+    cmap = plt.get_cmap("tab10")
+    palette = [to_hex(cmap(i)) for i in range(10)]
+    random.seed("39")
+    random.shuffle(palette)
+    palette = palette[: len(order)]
+    color_scale = alt.Scale(domain=order, range=palette)
+
+    plot_df = pd.DataFrame(
+        {"Feature": order, "Count": [int(feature_counts[f]) for f in order]}
+    )
+    plot_df["PercentLabel"] = plot_df["Count"].apply(
+        lambda c: f"{(c / total_repositories) * 100:.1f}%"
+    )
+    y_max = plot_df["Count"].max() * 1.12
+    plot_df["FullHeight"] = y_max
+
+    tooltip = [
+        alt.Tooltip("Feature:N", title="Feature"),
+        alt.Tooltip("Count:Q", title="Count"),
+        alt.Tooltip("PercentLabel:N", title="Share"),
+    ]
+
+    bars = (
+        alt.Chart(plot_df)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "Feature:N",
+                sort=order,
+                title="Feature",
+                axis=alt.Axis(labelAngle=-45, labelFontSize=label_size),
+            ),
+            y=alt.Y(
+                "Count:Q",
+                title="Repository Count",
+                scale=alt.Scale(domain=[0, y_max]),
+                axis=alt.Axis(grid=True, labelFontSize=label_size),
+            ),
+            color=alt.Color("Feature:N", scale=color_scale, legend=None),
+        )
+    )
+
+    # Transparent full-height hit areas so tooltips snap to the column
+    # even when the actual bar is tiny.
+    hit_area = (
+        alt.Chart(plot_df)
+        .mark_bar(opacity=0)
+        .encode(
+            x=alt.X("Feature:N", sort=order),
+            y=alt.Y("FullHeight:Q", scale=alt.Scale(domain=[0, y_max])),
+            tooltip=tooltip,
+        )
+    )
+
+    labels = (
+        alt.Chart(plot_df)
+        .mark_text(
+            align="center",
+            baseline="bottom",
+            dy=-4,
+            color="black",
+            fontSize=textprops,
+        )
+        .encode(
+            x=alt.X("Feature:N", sort=order),
+            y=alt.Y("Count:Q"),
+            text="PercentLabel:N",
+        )
+    )
+
+    title = f"Community Files Presence (Total: {total_repositories})"
+    if acronym:
+        title = f"{acronym} {title}"
+
+    return (
+        (bars + labels + hit_area)
+        .properties(width=width, height=height, title=title)
+        .configure_title(fontSize=title_size, anchor="middle")
+        .configure_axis(titleFontSize=label_size)
+        .configure_view(stroke=None)
+    )

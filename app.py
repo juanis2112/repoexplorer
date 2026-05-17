@@ -7,6 +7,7 @@ from shiny.express import input, ui, render
 from shiny import reactive
 from shiny import session as shiny_session
 from shiny import ui as sui
+from shinywidgets import render_altair
 from faicons import icon_svg
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -20,7 +21,7 @@ from repoexplorer.analysis.language_distribution import plot_language_distributi
 from repoexplorer.analysis.license_distribution_by_type import plot_license_distribution_by_type
 from repoexplorer.analysis.license_distribution import plot_license_distribution
 from repoexplorer.analysis.feature_counts_per_type import plot_feature_counts_per_type
-from repoexplorer.analysis.feature_counts import plot_feature_counts
+from repoexplorer.analysis.feature_counts import plot_feature_counts, plot_feature_counts_altair
 from repoexplorer.analysis.university_distribution import plot_university_distribution
 from repoexplorer.analysis.feature_heatmap_per_stars import plot_feature_heatmap_by_star_bucket
 from repoexplorer.analysis.commit_history import plot_commit_history
@@ -712,7 +713,7 @@ with ui.navset_pill(id="tab", selected="Overview"):
                             "—"
 
         # University distribution
-        with ui.layout_columns(col_widths=(7, 5)):
+        with ui.layout_columns(col_widths=(5, 7)):
             
             with ui.card():
                 @render.data_frame
@@ -747,37 +748,18 @@ with ui.navset_pill(id="tab", selected="Overview"):
                         ],
                     )
             
-            with ui.card():
-                @render.plot
+            with ui.card(height="450px"):
+                @render_altair
                 def plot_files_combined():
-                    return _make_feature_counts_combined_fig(
+                    chart = plot_feature_counts_altair(
                         filtered_df(),
                         FEATURES,
                         acronym="",
-                        figsize=(8, 6),
                         label_size=10,
                         title_size=12,
                         textprops=8,
                     )
-
-                @render.download(
-                    filename=lambda: f"community_files_presence_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.png"
-                )
-                def download_plot_files_combined():
-                    fig = _make_feature_counts_combined_fig(
-                        filtered_df(),
-                        FEATURES,
-                        acronym="",
-                        figsize=(8, 6),
-                        label_size=11,
-                        title_size=12,
-                        textprops=10,
-                    )
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-                    buf.seek(0)
-                    plt.close(fig)
-                    yield buf.read()
+                    return chart
 
         with ui.layout_columns(col_widths=(4, 4, 4)):  
             with ui.card():
