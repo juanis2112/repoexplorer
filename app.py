@@ -53,7 +53,7 @@ ENABLE_CHAT = False
 # Global flag for where to read data:
 # - "local"  -> use parquet files under Data/parquet (default)
 # - "remote" -> download reduced combined parquet files from S3 bucket
-DATA = "remote"
+DATA = os.getenv("DATA")
 
 
 if "OPENAI_MODEL" not in os.environ:
