@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import altair as alt
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
+from matplotlib.colors import to_hex
+import pandas as pd
 
 
 def plot_type_distribution(
@@ -100,3 +103,102 @@ def plot_type_distribution(
             loc="center",
             pad=20
         )
+
+
+def plot_type_distribution_altair(
+    filtered_data,
+    acronym="",
+    label_size=10,
+    title_size=12,
+    textprops=8,
+):
+    """
+    Altair version of the project type distribution pie chart for on-screen
+    rendering. Mirrors the matplotlib version in `plot_type_distribution`.
+    """
+    width = "container"
+    height = "container"
+    type_col = "type_prediction_gpt_5_mini"
+
+    if (
+        filtered_data is None
+        or filtered_data.empty
+        or type_col not in filtered_data.columns
+    ):
+        return (
+            alt.Chart(pd.DataFrame({"Category": [], "Count": []}))
+            .mark_arc()
+            .properties(width=width, height=height, title="Project Type Distribution")
+        )
+
+    plot_data = filtered_data[
+        filtered_data[type_col].astype(str).str.strip().str.lower() != "error"
+    ]
+    total_repositories = len(plot_data)
+    category_counts = plot_data[type_col].value_counts()
+
+    if category_counts.empty:
+        return (
+            alt.Chart(pd.DataFrame({"Category": [], "Count": []}))
+            .mark_arc()
+            .properties(width=width, height=height, title="Project Type Distribution")
+        )
+
+    labels = category_counts.index.tolist()
+    cmap = cm.get_cmap("tab20")
+    palette = [to_hex(cmap(i)) for i in range(len(labels))]
+    color_scale = alt.Scale(domain=labels, range=palette)
+
+    plot_df = pd.DataFrame(
+        {
+            "Category": labels,
+            "Count": [int(category_counts[c]) for c in labels],
+        }
+    )
+    plot_df["PercentLabel"] = plot_df["Count"].apply(
+        lambda c: f"{(c / total_repositories) * 100:.1f}%"
+    )
+
+    tooltip = [
+        alt.Tooltip("Category:N", title="Category"),
+        alt.Tooltip("Count:Q", title="Count"),
+        alt.Tooltip("PercentLabel:N", title="Share"),
+    ]
+
+    base = alt.Chart(plot_df).encode(
+        theta=alt.Theta("Count:Q", stack=True),
+        color=alt.Color(
+            "Category:N",
+            scale=color_scale,
+            legend=alt.Legend(
+                title=None,
+                labelFontSize=label_size,
+                orient="top-left",
+            ),
+        ),
+        tooltip=tooltip,
+    )
+
+    # Scale radii with the container so the pie reacts to the card size.
+    outer_radius_expr = "min(width, height) / 2 - 10"
+    text_radius_expr = "min(width, height) / 2 + 10"
+
+    arcs = base.mark_arc(outerRadius=alt.expr(outer_radius_expr))
+    pct_text = base.mark_text(
+        radius=alt.expr(text_radius_expr),
+        fontSize=textprops,
+    ).encode(
+        text="PercentLabel:N",
+        color=alt.value("black"),
+    )
+
+    title = f"Project Type Distribution (Total: {total_repositories})"
+    if acronym:
+        title = f"{acronym} {title}"
+
+    return (
+        (arcs + pct_text)
+        .properties(width=width, height=height, title=title)
+        .configure_title(fontSize=title_size, anchor="middle")
+        .configure_view(stroke=None)
+    )
