@@ -712,7 +712,7 @@ with ui.navset_pill(id="tab", selected="Overview"):
                             "—"
 
         # University distribution
-        with ui.layout_columns(col_widths=(7, 5)):
+        with ui.layout_columns(col_widths=(5, 7)):
             
             with ui.card():
                 @render.data_frame
