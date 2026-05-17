@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import altair as alt
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex
 import pandas as pd
  
 def plot_license_distribution_by_type(
@@ -184,4 +186,158 @@ def plot_license_distribution_by_type(
     # Optional: draw vertical line to separate 'Project Type' bar visually
     pt_index = license_labels.index('Project Type')
     ax.axvline(pt_index - 0.4, color='gray', linestyle='--', linewidth=1.5)
+
+
+def plot_license_distribution_by_type_altair(
+    filtered_data,
+    acronym="",
+    label_size=10,
+    title_size=12,
+    textprops=8,
+    other_thres=0.02,
+):
+    """
+    Altair version of the license distribution by project type stacked bar chart.
+    Mirrors the matplotlib version in `plot_license_distribution_by_type`.
+    """
+    width = "container"
+    height = "container"
+
+    if (
+        filtered_data is None
+        or filtered_data.empty
+        or "license" not in filtered_data.columns
+        or "type_prediction_gpt_5_mini" not in filtered_data.columns
+    ):
+        return (
+            alt.Chart(pd.DataFrame({"License": [], "Count": []}))
+            .mark_bar()
+            .properties(width=width, height=height, title="License Distribution")
+        )
+
+    total_repositories = len(filtered_data)
+    data = filtered_data.copy()
+    data["license"] = data["license"].fillna("None")
+
+    grouped = (
+        data.groupby("license")["type_prediction_gpt_5_mini"]
+        .value_counts()
+        .unstack(fill_value=0)
+    )
+
+    license_totals = data["license"].value_counts()
+    total_licenses = license_totals.sum()
+    major_licenses = license_totals[
+        license_totals / total_licenses >= other_thres
+    ].index.tolist()
+
+    minor_rows = grouped.drop(index=major_licenses, errors="ignore")
+    grouped = grouped.loc[major_licenses]
+
+    if not minor_rows.empty:
+        grouped.loc["Other"] = minor_rows.sum()
+
+    if "other" in grouped.index:
+        if "Other" in grouped.index:
+            grouped.loc["Other"] += grouped.loc["other"]
+        else:
+            grouped.loc["Other"] = grouped.loc["other"]
+        grouped = grouped.drop("other")
+
+    grouped = grouped.fillna(0)
+    total_counts = grouped.sum(axis=1)
+    grouped = grouped.loc[total_counts.sort_values().index]
+
+    project_type_totals = filtered_data["type_prediction_gpt_5_mini"].value_counts()
+    project_type_totals.name = "Project Type"
+    grouped_with_pt = pd.concat([grouped, project_type_totals.to_frame().T])
+
+    license_order = grouped_with_pt.index.tolist()
+
+    # Project type colors
+    category_list = grouped_with_pt.columns.tolist()
+    cmap = plt.get_cmap("tab20")
+    palette = [to_hex(cmap(i)) for i in range(len(category_list))]
+    color_scale = alt.Scale(domain=category_list, range=palette)
+
+    # Long-format dataframe for the stacked bars
+    long_df = (
+        grouped_with_pt.reset_index()
+        .melt(id_vars="index", var_name="ProjectType", value_name="Count")
+        .rename(columns={"index": "License"})
+    )
+    long_df = long_df[long_df["Count"] > 0]
+
+    # Per-license totals for the percentage label on top of each stack
+    totals_df = pd.DataFrame(
+        {
+            "License": license_order,
+            "Total": [int(grouped_with_pt.loc[l].sum()) for l in license_order],
+        }
+    )
+    totals_df["PercentLabel"] = totals_df["Total"].apply(
+        lambda c: f"{(c / total_repositories) * 100:.1f}%"
+    )
+
+    bars = (
+        alt.Chart(long_df)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "License:N",
+                sort=license_order,
+                title="License",
+                axis=alt.Axis(labelAngle=-45, labelFontSize=label_size),
+            ),
+            y=alt.Y(
+                "Count:Q",
+                stack="zero",
+                title="Repository Count",
+                axis=alt.Axis(grid=True, labelFontSize=label_size),
+            ),
+            color=alt.Color(
+                "ProjectType:N",
+                scale=color_scale,
+                legend=alt.Legend(
+                    title="Project Type",
+                    orient="top-left",
+                    labelFontSize=label_size,
+                    titleFontSize=label_size,
+                ),
+            ),
+            tooltip=[
+                alt.Tooltip("License:N", title="License"),
+                alt.Tooltip("ProjectType:N", title="Project Type"),
+                alt.Tooltip("Count:Q", title="Count"),
+            ],
+        )
+    )
+
+    labels = (
+        alt.Chart(totals_df)
+        .mark_text(
+            align="center",
+            baseline="bottom",
+            dy=-4,
+            color="black",
+            fontSize=textprops,
+        )
+        .encode(
+            x=alt.X("License:N", sort=license_order),
+            y=alt.Y("Total:Q"),
+            text="PercentLabel:N",
+        )
+    )
+
+    title = f"License Distribution (Total: {total_repositories})"
+    if acronym:
+        title = f"{acronym} {title}"
+
+    return (
+        (bars + labels)
+        .properties(width=width, height=height, title=title)
+        .configure_title(fontSize=title_size, anchor="middle")
+        .configure_axis(titleFontSize=label_size)
+        .configure_view(stroke=None)
+    )
 

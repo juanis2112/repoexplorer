@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import altair as alt
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex
 import pandas as pd
  
 def plot_language_distribution_by_type(
@@ -192,5 +194,153 @@ def plot_language_distribution_by_type(
     # Optional: draw vertical line to separate 'Project Type' bar visually
     pt_index = language_labels.index('Project Type')
     ax.axvline(pt_index - 0.4, color='gray', linestyle='--', linewidth=1.5)
-    
+
     return language_labels  # Return order for consistent reuse
+
+
+def plot_language_distribution_by_type_altair(
+    filtered_data,
+    acronym="",
+    label_size=10,
+    title_size=12,
+    textprops=8,
+    other_thres=0.02,
+):
+    """
+    Altair version of the language distribution by project type stacked bar chart.
+    Mirrors the matplotlib version in `plot_language_distribution_by_type`.
+    """
+    width = "container"
+    height = "container"
+
+    if (
+        filtered_data is None
+        or filtered_data.empty
+        or "language" not in filtered_data.columns
+        or "type_prediction_gpt_5_mini" not in filtered_data.columns
+    ):
+        return (
+            alt.Chart(pd.DataFrame({"Language": [], "Count": []}))
+            .mark_bar()
+            .properties(width=width, height=height, title="Language Distribution")
+        )
+
+    total_repositories = len(filtered_data)
+    data = filtered_data.copy()
+    data["language"] = data["language"].fillna("None")
+    data["language"] = data["language"].replace(
+        {"other": "Other", "Jupyter Notebook": "Jupyter NB"}
+    )
+
+    grouped = (
+        data.groupby("language")["type_prediction_gpt_5_mini"]
+        .value_counts()
+        .unstack(fill_value=0)
+    )
+
+    language_totals = data["language"].value_counts()
+    total_languages = language_totals.sum()
+    major_languages = language_totals[
+        language_totals / total_languages >= other_thres
+    ].index.tolist()
+
+    minor_rows = grouped.drop(index=major_languages, errors="ignore")
+    grouped = grouped.loc[major_languages]
+
+    if not minor_rows.empty:
+        grouped.loc["Other"] = minor_rows.sum()
+    grouped = grouped.fillna(0)
+
+    total_counts = grouped.sum(axis=1)
+    grouped = grouped.loc[total_counts.sort_values().index]
+
+    project_type_totals = filtered_data["type_prediction_gpt_5_mini"].value_counts()
+    project_type_totals.name = "Project Type"
+    grouped_with_pt = pd.concat([grouped, project_type_totals.to_frame().T])
+
+    language_order = grouped_with_pt.index.tolist()
+
+    # Project type colors
+    category_list = grouped_with_pt.columns.tolist()
+    cmap = plt.get_cmap("tab20")
+    palette = [to_hex(cmap(i)) for i in range(len(category_list))]
+    color_scale = alt.Scale(domain=category_list, range=palette)
+
+    long_df = (
+        grouped_with_pt.reset_index()
+        .melt(id_vars="index", var_name="ProjectType", value_name="Count")
+        .rename(columns={"index": "Language"})
+    )
+    long_df = long_df[long_df["Count"] > 0]
+
+    totals_df = pd.DataFrame(
+        {
+            "Language": language_order,
+            "Total": [int(grouped_with_pt.loc[l].sum()) for l in language_order],
+        }
+    )
+    totals_df["PercentLabel"] = totals_df["Total"].apply(
+        lambda c: f"{(c / total_repositories) * 100:.1f}%"
+    )
+
+    bars = (
+        alt.Chart(long_df)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "Language:N",
+                sort=language_order,
+                title="Language",
+                axis=alt.Axis(labelAngle=-45, labelFontSize=label_size),
+            ),
+            y=alt.Y(
+                "Count:Q",
+                stack="zero",
+                title="Repository Count",
+                axis=alt.Axis(grid=True, labelFontSize=label_size),
+            ),
+            color=alt.Color(
+                "ProjectType:N",
+                scale=color_scale,
+                legend=alt.Legend(
+                    title="Project Type",
+                    orient="top-left",
+                    labelFontSize=label_size,
+                    titleFontSize=label_size,
+                ),
+            ),
+            tooltip=[
+                alt.Tooltip("Language:N", title="Language"),
+                alt.Tooltip("ProjectType:N", title="Project Type"),
+                alt.Tooltip("Count:Q", title="Count"),
+            ],
+        )
+    )
+
+    labels = (
+        alt.Chart(totals_df)
+        .mark_text(
+            align="center",
+            baseline="bottom",
+            dy=-4,
+            color="black",
+            fontSize=textprops,
+        )
+        .encode(
+            x=alt.X("Language:N", sort=language_order),
+            y=alt.Y("Total:Q"),
+            text="PercentLabel:N",
+        )
+    )
+
+    title = f"Language Distribution (Total: {total_repositories})"
+    if acronym:
+        title = f"{acronym} {title}"
+
+    return (
+        (bars + labels)
+        .properties(width=width, height=height, title=title)
+        .configure_title(fontSize=title_size, anchor="middle")
+        .configure_axis(titleFontSize=label_size)
+        .configure_view(stroke=None)
+    )
