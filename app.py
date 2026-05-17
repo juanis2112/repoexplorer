@@ -19,7 +19,7 @@ from repoexplorer.analysis.type_distribution import plot_type_distribution, plot
 from repoexplorer.analysis.language_distribution_by_type import plot_language_distribution_by_type
 from repoexplorer.analysis.language_distribution import plot_language_distribution, plot_language_distribution_altair
 from repoexplorer.analysis.license_distribution_by_type import plot_license_distribution_by_type
-from repoexplorer.analysis.license_distribution import plot_license_distribution
+from repoexplorer.analysis.license_distribution import plot_license_distribution, plot_license_distribution_altair
 from repoexplorer.analysis.feature_counts_per_type import plot_feature_counts_per_type
 from repoexplorer.analysis.feature_counts import plot_feature_counts, plot_feature_counts_altair
 from repoexplorer.analysis.university_distribution import plot_university_distribution
@@ -786,36 +786,16 @@ with ui.navset_pill(id="tab", selected="Overview"):
                     )
 
             with ui.card():
-                @render.plot
+                @render_altair
                 def plot_license_combined():
-                    return _make_license_combined_fig(
+                    return plot_license_distribution_altair(
                         filtered_df(),
                         acronym="",
-                        figsize=(8, 6),
                         label_size=10,
                         title_size=12,
-                        textprops=7,
-                        other_thres=0.009,
+                        textprops=8,
+                        other_thres=0.02,
                     )
-
-                @render.download(
-                    filename=lambda: f"license_distribution_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.png"
-                )
-                def download_plot_license_combined():
-                    fig = _make_license_combined_fig(
-                        filtered_df(),
-                        acronym="",
-                        figsize=(8, 6),
-                        label_size=11,
-                        title_size=12,
-                        textprops=9,
-                        other_thres=0.009,
-                    )
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-                    buf.seek(0)
-                    plt.close(fig)
-                    yield buf.read()
         
         with ui.layout_columns(col_widths=(6, 6)):
             with ui.card():

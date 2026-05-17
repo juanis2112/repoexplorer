@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import altair as alt
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
+from matplotlib.colors import to_hex
+import pandas as pd
 from adjustText import adjust_text
 
 def plot_license_distribution(    filtered_data, acronym="", ax=None, color_map=None,
@@ -108,3 +111,109 @@ def plot_license_distribution(    filtered_data, acronym="", ax=None, color_map=
     #     ax.set_title(f"{acronym.upper()} License Distribution (Minor Categories) Total Repositories: {total_repositories}")
     #     plt.savefig(f'plots/{acronym}/license_distribution_minor.png', dpi=300, bbox_inches='tight')
     #     plt.close()
+
+
+def plot_license_distribution_altair(
+    filtered_data,
+    acronym="",
+    label_size=10,
+    title_size=12,
+    textprops=8,
+    other_thres=0.02,
+):
+    """
+    Altair version of the license distribution pie chart for on-screen
+    rendering. Mirrors the matplotlib version in `plot_license_distribution`.
+    """
+    width = "container"
+    height = "container"
+
+    if (
+        filtered_data is None
+        or filtered_data.empty
+        or "license" not in filtered_data.columns
+    ):
+        return (
+            alt.Chart(pd.DataFrame({"License": [], "Count": []}))
+            .mark_arc()
+            .properties(width=width, height=height, title="License Distribution")
+        )
+
+    total_repositories = len(filtered_data)
+    license_counts = filtered_data["license"].fillna("None").value_counts()
+    total_licenses = license_counts.sum()
+
+    if license_counts.empty or total_licenses == 0:
+        return (
+            alt.Chart(pd.DataFrame({"License": [], "Count": []}))
+            .mark_arc()
+            .properties(width=width, height=height, title="License Distribution")
+        )
+
+    lic_major = license_counts[license_counts / total_licenses >= other_thres].copy()
+    lic_minor = license_counts[license_counts / total_licenses < other_thres].copy()
+    lic_grouped = lic_major.copy()
+    if not lic_minor.empty:
+        lic_grouped["Other"] = lic_minor.sum()
+    if "other" in lic_grouped:
+        lic_grouped["Other"] = lic_grouped.get("Other", 0) + lic_grouped["other"]
+        lic_grouped = lic_grouped.drop("other")
+
+    labels = lic_grouped.index.tolist()
+    cmap = cm.get_cmap("tab20")
+    palette = [to_hex(cmap(i)) for i in range(len(labels))]
+    color_scale = alt.Scale(domain=labels, range=palette)
+
+    plot_df = pd.DataFrame(
+        {
+            "License": labels,
+            "Count": [int(lic_grouped[l]) for l in labels],
+        }
+    )
+    plot_df["PercentLabel"] = plot_df["Count"].apply(
+        lambda c: f"{(c / total_licenses) * 100:.1f}%"
+    )
+
+    tooltip = [
+        alt.Tooltip("License:N", title="License"),
+        alt.Tooltip("Count:Q", title="Count"),
+        alt.Tooltip("PercentLabel:N", title="Share"),
+    ]
+
+    base = alt.Chart(plot_df).encode(
+        theta=alt.Theta("Count:Q", stack=True),
+        color=alt.Color(
+            "License:N",
+            scale=color_scale,
+            legend=alt.Legend(
+                title=None,
+                labelFontSize=label_size,
+                orient="top-left",
+            ),
+        ),
+        tooltip=tooltip,
+    )
+
+    # Scale radii with the container so the pie reacts to the card size.
+    outer_radius_expr = "min(width, height) / 2 - 10"
+    text_radius_expr = "min(width, height) / 2 + 10"
+
+    arcs = base.mark_arc(outerRadius=alt.expr(outer_radius_expr))
+    pct_text = base.mark_text(
+        radius=alt.expr(text_radius_expr),
+        fontSize=textprops,
+    ).encode(
+        text="PercentLabel:N",
+        color=alt.value("black"),
+    )
+
+    title = f"License Distribution (Total: {total_repositories})"
+    if acronym:
+        title = f"{acronym} {title}"
+
+    return (
+        (arcs + pct_text)
+        .properties(width=width, height=height, title=title)
+        .configure_title(fontSize=title_size, anchor="middle")
+        .configure_view(stroke=None)
+    )
