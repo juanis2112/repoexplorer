@@ -278,6 +278,8 @@ def plot_license_distribution_by_type_altair(
     totals_df["PercentLabel"] = totals_df["Total"].apply(
         lambda c: f"{(c / total_repositories) * 100:.1f}%"
     )
+    y_max = totals_df["Total"].max() * 1.12 if not totals_df.empty else 1
+    totals_df["FullHeight"] = y_max
 
     bars = (
         alt.Chart(long_df)
@@ -293,6 +295,7 @@ def plot_license_distribution_by_type_altair(
                 "Count:Q",
                 stack="zero",
                 title="Repository Count",
+                scale=alt.Scale(domain=[0, y_max]),
                 axis=alt.Axis(grid=True, labelFontSize=label_size),
             ),
             color=alt.Color(
@@ -305,11 +308,6 @@ def plot_license_distribution_by_type_altair(
                     titleFontSize=label_size,
                 ),
             ),
-            tooltip=[
-                alt.Tooltip("License:N", title="License"),
-                alt.Tooltip("ProjectType:N", title="Project Type"),
-                alt.Tooltip("Count:Q", title="Count"),
-            ],
         )
     )
 
@@ -329,12 +327,28 @@ def plot_license_distribution_by_type_altair(
         )
     )
 
+    # Transparent full-height hit area so tooltips snap to the column
+    # even when the stack is short.
+    hit_area = (
+        alt.Chart(totals_df)
+        .mark_bar(opacity=0)
+        .encode(
+            x=alt.X("License:N", sort=license_order),
+            y=alt.Y("FullHeight:Q", scale=alt.Scale(domain=[0, y_max])),
+            tooltip=[
+                alt.Tooltip("License:N", title="License"),
+                alt.Tooltip("Total:Q", title="Count"),
+                alt.Tooltip("PercentLabel:N", title="Share"),
+            ],
+        )
+    )
+
     title = f"License Distribution (Total: {total_repositories})"
     if acronym:
         title = f"{acronym} {title}"
 
     return (
-        (bars + labels)
+        (bars + labels + hit_area)
         .properties(width=width, height=height, title=title)
         .configure_title(fontSize=title_size, anchor="middle")
         .configure_axis(titleFontSize=label_size)
