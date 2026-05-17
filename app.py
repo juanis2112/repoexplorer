@@ -16,9 +16,9 @@ import json
 import logging
 import querychat as qc
 from repoexplorer.analysis.type_distribution import plot_type_distribution, plot_type_distribution_altair
-from repoexplorer.analysis.language_distribution_by_type import plot_language_distribution_by_type
+from repoexplorer.analysis.language_distribution_by_type import plot_language_distribution_by_type, plot_language_distribution_by_type_altair
 from repoexplorer.analysis.language_distribution import plot_language_distribution, plot_language_distribution_altair
-from repoexplorer.analysis.license_distribution_by_type import plot_license_distribution_by_type
+from repoexplorer.analysis.license_distribution_by_type import plot_license_distribution_by_type, plot_license_distribution_by_type_altair
 from repoexplorer.analysis.license_distribution import plot_license_distribution, plot_license_distribution_altair
 from repoexplorer.analysis.feature_counts_per_type import plot_feature_counts_per_type
 from repoexplorer.analysis.feature_counts import plot_feature_counts, plot_feature_counts_altair
@@ -799,71 +799,28 @@ with ui.navset_pill(id="tab", selected="Overview"):
         
         with ui.layout_columns(col_widths=(6, 6)):
             with ui.card():
-                @render.plot
+                @render_altair
                 def plot_license():
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    plot_license_distribution_by_type(
+                    return plot_license_distribution_by_type_altair(
                         filtered_df(),
                         acronym="",
-                        ax=ax,
                         label_size=9,
                         title_size=12,
-                        textprops=9,
+                        textprops=8,
                         other_thres=0.009,
                     )
-
-                @render.download(
-                    filename=lambda: f"license_distribution_by_type_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.png"
-                )
-                def download_plot_license_by_type():
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    plot_license_distribution_by_type(
-                        filtered_df(),
-                        acronym="",
-                        ax=ax,
-                        label_size=9,
-                        title_size=12,
-                        textprops=9,
-                        other_thres=0.009,
-                    )
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-                    buf.seek(0)
-                    plt.close(fig)
-                    yield buf.read()
 
             with ui.card():
-                @render.plot
+                @render_altair
                 def plot_language():
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    plot_language_distribution_by_type(
+                    return plot_language_distribution_by_type_altair(
                         filtered_df(),
                         acronym="",
-                        ax=ax,
                         label_size=9,
                         title_size=12,
-                        props=9,
+                        textprops=8,
                         other_thres=0.02,
                     )
-                @render.download(
-                    filename=lambda: f"language_distribution_by_type_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.png"
-                )
-                def download_plot_language_by_type():
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    plot_language_distribution_by_type(
-                        filtered_df(),
-                        acronym="",
-                        ax=ax,
-                        label_size=9,
-                        title_size=12,
-                        props=9,
-                        other_thres=0.02,
-                    )
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-                    buf.seek(0)
-                    plt.close(fig)
-                    yield buf.read()
     
 
 #------------------------------------ Repositories ----------------------------------------------
