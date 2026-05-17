@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_hex
