@@ -343,7 +343,7 @@ def plot_license_distribution_by_type_altair(
         )
     )
 
-    title = f"License Distribution (Total: {total_repositories})"
+    title = f"License Distribution by Type (Total: {total_repositories})"
     if acronym:
         title = f"{acronym} {title}"
 

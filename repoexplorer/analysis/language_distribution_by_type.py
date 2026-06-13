@@ -347,7 +347,7 @@ def plot_language_distribution_by_type_altair(
         )
     )
 
-    title = f"Language Distribution (Total: {total_repositories})"
+    title = f"Language Distribution by Type (Total: {total_repositories})"
     if acronym:
         title = f"{acronym} {title}"
 

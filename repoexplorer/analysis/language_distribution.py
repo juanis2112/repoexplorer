@@ -8,6 +8,12 @@ import matplotlib.colors as mcolors
 from matplotlib.colors import to_hex
 import pandas as pd
 
+from repoexplorer.analysis.altair_pie_helpers import (
+    pie_arc_layer,
+    pie_pct_label_layer,
+    prepare_pie_label_data,
+)
+
 LANGUAGE_LABEL_MAP = {
     "Jupyter Notebook": "Jupyter",
 }
@@ -159,6 +165,7 @@ def plot_language_distribution_altair(
     plot_df["PercentLabel"] = plot_df["Count"].apply(
         lambda c: f"{(c / total_languages) * 100:.1f}%"
     )
+    plot_df = prepare_pie_label_data(plot_df)
 
     tooltip = [
         alt.Tooltip("Language:N", title="Language"),
@@ -166,32 +173,26 @@ def plot_language_distribution_altair(
         alt.Tooltip("PercentLabel:N", title="Share"),
     ]
 
-    base = alt.Chart(plot_df).encode(
-        theta=alt.Theta("Count:Q", stack=True),
-        color=alt.Color(
-            "Language:N",
-            scale=color_scale,
-            legend=alt.Legend(
-                title=None,
-                labelFontSize=label_size,
-                orient="top-left",
-            ),
-        ),
-        tooltip=tooltip,
+    outer_radius_expr = "min(width, height) * 0.38"
+    text_radius_expr = "min(width, height) * 0.22"
+
+    legend = alt.Legend(
+        title=None,
+        labelFontSize=label_size,
+        orient="bottom-right",
+        offset=0,
+        padding=0,
     )
 
-    # Scale radii with the container so the pie reacts to the card size.
-    outer_radius_expr = "min(width, height) / 2 - 10"
-    text_radius_expr = "min(width, height) / 2 + 10"
-
-    arcs = base.mark_arc(outerRadius=alt.expr(outer_radius_expr))
-    pct_text = base.mark_text(
-        radius=alt.expr(text_radius_expr),
-        fontSize=textprops,
-    ).encode(
-        text="PercentLabel:N",
-        color=alt.value("black"),
+    arcs = pie_arc_layer(
+        plot_df,
+        outer_radius_expr,
+        "Language:N",
+        color_scale,
+        legend,
+        tooltip,
     )
+    pct_text = pie_pct_label_layer(plot_df, text_radius_expr, textprops)
 
     title = f"Language Distribution (Total: {total_repositories})"
     if acronym:
@@ -199,7 +200,11 @@ def plot_language_distribution_altair(
 
     return (
         (arcs + pct_text)
-        .properties(width=width, height=height, title=title)
-        .configure_title(fontSize=title_size, anchor="middle")
+        .properties(
+            width=width,
+            height=height,
+            title=alt.TitleParams(text=title, fontSize=title_size, anchor="middle"),
+        )
+        .configure(padding={"right": 0, "bottom": 0})
         .configure_view(stroke=None)
     )

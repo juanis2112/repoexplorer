@@ -363,6 +363,20 @@ aside .form-label,
 """)
 
 ui.tags.style("""
+/* Altair / Vega chart hover tooltips */
+#vg-tooltip-element,
+#vg-tooltip-element table,
+#vg-tooltip-element td,
+#vg-tooltip-element th {
+    font-size: 15px !important;
+    line-height: 1.45 !important;
+}
+#vg-tooltip-element {
+    padding: 12px 16px !important;
+}
+""")
+
+ui.tags.style("""
 /* Sidebar: allow manual resize by dragging the right edge */
 .bslib-sidebar,
 aside[data-bslib-sidebar],
@@ -634,6 +648,13 @@ def reset_all_filters():
 
 #------------------------------------ Overview ----------------------------------------------
 
+# Typography for Overview tab charts (titles, axis labels, legends, annotations)
+_OVERVIEW_TITLE_SIZE = 16
+_OVERVIEW_LABEL_SIZE = 14
+_OVERVIEW_TEXT_SIZE = 11
+_OVERVIEW_BAR_PCT_SIZE = 14
+_OVERVIEW_PIE_PCT_SIZE = 14
+
 
 # Icons for Overview / Impact value boxes
 ICONS = {
@@ -755,9 +776,9 @@ with ui.navset_pill(id="tab", selected="Overview"):
                         filtered_df(),
                         FEATURES,
                         acronym="",
-                        label_size=10,
-                        title_size=12,
-                        textprops=8,
+                        label_size=_OVERVIEW_LABEL_SIZE,
+                        title_size=_OVERVIEW_TITLE_SIZE,
+                        textprops=_OVERVIEW_BAR_PCT_SIZE,
                     )
                     return chart
 
@@ -768,9 +789,9 @@ with ui.navset_pill(id="tab", selected="Overview"):
                     return plot_type_distribution_altair(
                         filtered_df(),
                         acronym="",
-                        label_size=10,
-                        title_size=12,
-                        textprops=8,
+                        label_size=_OVERVIEW_LABEL_SIZE,
+                        title_size=_OVERVIEW_TITLE_SIZE,
+                        textprops=_OVERVIEW_PIE_PCT_SIZE,
                     )
 
             with ui.card():
@@ -779,9 +800,9 @@ with ui.navset_pill(id="tab", selected="Overview"):
                     return plot_language_distribution_altair(
                         filtered_df(),
                         acronym="",
-                        label_size=10,
-                        title_size=12,
-                        textprops=8,
+                        label_size=_OVERVIEW_LABEL_SIZE,
+                        title_size=_OVERVIEW_TITLE_SIZE,
+                        textprops=_OVERVIEW_PIE_PCT_SIZE,
                         other_thres=0.05,
                     )
 
@@ -791,9 +812,9 @@ with ui.navset_pill(id="tab", selected="Overview"):
                     return plot_license_distribution_altair(
                         filtered_df(),
                         acronym="",
-                        label_size=10,
-                        title_size=12,
-                        textprops=8,
+                        label_size=_OVERVIEW_LABEL_SIZE,
+                        title_size=_OVERVIEW_TITLE_SIZE,
+                        textprops=_OVERVIEW_PIE_PCT_SIZE,
                         other_thres=0.02,
                     )
         
@@ -804,9 +825,9 @@ with ui.navset_pill(id="tab", selected="Overview"):
                     return plot_license_distribution_by_type_altair(
                         filtered_df(),
                         acronym="",
-                        label_size=9,
-                        title_size=12,
-                        textprops=8,
+                        label_size=_OVERVIEW_LABEL_SIZE,
+                        title_size=_OVERVIEW_TITLE_SIZE,
+                        textprops=_OVERVIEW_BAR_PCT_SIZE,
                         other_thres=0.009,
                     )
 
@@ -816,9 +837,9 @@ with ui.navset_pill(id="tab", selected="Overview"):
                     return plot_language_distribution_by_type_altair(
                         filtered_df(),
                         acronym="",
-                        label_size=9,
-                        title_size=12,
-                        textprops=8,
+                        label_size=_OVERVIEW_LABEL_SIZE,
+                        title_size=_OVERVIEW_TITLE_SIZE,
+                        textprops=_OVERVIEW_BAR_PCT_SIZE,
                         other_thres=0.02,
                     )
     
