@@ -109,7 +109,7 @@ def plot_language_distribution_by_type(
 
     # Project type list and colormap
     category_list = grouped_with_pt.columns.tolist()
-    cmap = plt.get_cmap('tab20')
+    cmap = plt.colormaps['tab20']
     category_colors = {cat: cmap(i) for i, cat in enumerate(category_list)}
 
     num_languages = len(grouped)
@@ -262,7 +262,7 @@ def plot_language_distribution_by_type_altair(
 
     # Project type colors
     category_list = grouped_with_pt.columns.tolist()
-    cmap = plt.get_cmap("tab20")
+    cmap = plt.colormaps["tab20"]
     palette = [to_hex(cmap(i)) for i in range(len(category_list))]
     color_scale = alt.Scale(domain=category_list, range=palette)
 

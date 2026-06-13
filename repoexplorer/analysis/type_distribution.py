@@ -3,7 +3,6 @@
 
 import altair as alt
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from matplotlib.colors import to_hex
 import pandas as pd
@@ -61,7 +60,7 @@ def plot_type_distribution(
 
     labels = category_counts.index.tolist()
 
-    cmap = cm.get_cmap('tab20')
+    cmap = plt.colormaps['tab20']
     category_colors = {cat: cmap(i) for i, cat in enumerate(labels)}
     colors = [category_colors[cat] for cat in labels]
     
@@ -151,7 +150,7 @@ def plot_type_distribution_altair(
         )
 
     labels = category_counts.index.tolist()
-    cmap = cm.get_cmap("tab20")
+    cmap = plt.colormaps["tab20"]
     palette = [to_hex(cmap(i)) for i in range(len(labels))]
     color_scale = alt.Scale(domain=labels, range=palette)
 

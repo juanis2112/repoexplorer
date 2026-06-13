@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 import pandas as pd
 import numpy as np
 
@@ -60,7 +59,7 @@ def plot_feature_distribution_by_star_bucket(
     plot_df = pd.DataFrame(results)
     x = np.arange(len(feature_keys))
     width = 0.25
-    cmap = cm.get_cmap('tab20')
+    cmap = plt.colormaps['tab20']
     colors = [cmap(i) for i in range(3)]
 
     if ax is None:

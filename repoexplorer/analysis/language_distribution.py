@@ -3,7 +3,6 @@
 
 import altair as alt
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from matplotlib.colors import to_hex
 import pandas as pd
@@ -52,7 +51,7 @@ def plot_language_distribution(filtered_data, acronym="", ax=None, color_map=Non
         lang_grouped['Other'] = lang_minor.sum()
 
     labels = lang_grouped.index.tolist()
-    cmap = cm.get_cmap('tab20')
+    cmap = plt.colormaps['tab20']
     category_colors = {cat: cmap(i) for i, cat in enumerate(labels)}
     colors = [category_colors[cat] for cat in labels] # fallback: hot pink
  # hot pink if missing
@@ -152,7 +151,7 @@ def plot_language_distribution_altair(
         lang_grouped["Other"] = lang_minor.sum()
 
     labels = lang_grouped.index.tolist()
-    cmap = cm.get_cmap("tab20")
+    cmap = plt.colormaps["tab20"]
     palette = [to_hex(cmap(i)) for i in range(len(labels))]
     color_scale = alt.Scale(domain=labels, range=palette)
 

@@ -59,7 +59,7 @@ def plot_contributors_distribution_bar(
         return
 
     counts = buckets[valid].value_counts().reindex(_BUCKET_LABELS, fill_value=0)
-    cmap = plt.get_cmap("tab10")
+    cmap = plt.colormaps["tab10"]
     colors = [cmap(i % 10) for i in range(len(_BUCKET_LABELS))]
     if color_map:
         colors = [color_map.get(lbl, colors[i]) for i, lbl in enumerate(_BUCKET_LABELS)]

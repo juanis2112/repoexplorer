@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 
 def plot_university_distribution(
@@ -37,7 +36,7 @@ def plot_university_distribution(
     labels = university_counts.index.tolist()
 
     # Color map
-    cmap = cm.get_cmap('tab20')
+    cmap = plt.colormaps['tab20']
     university_colors = {uni: cmap(i) for i, uni in enumerate(labels)}
     colors = [university_colors[uni] for uni in labels]
 

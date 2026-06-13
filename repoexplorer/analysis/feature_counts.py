@@ -79,7 +79,7 @@ def plot_feature_counts(
 
     # Set consistent colors across subplots
     if feature_colors is None:
-        cmap = plt.get_cmap('tab10')
+        cmap = plt.colormaps['tab10']
         palette = [cmap(i) for i in range(10)]
         random.seed("39")
         random.shuffle(palette) 
@@ -187,7 +187,7 @@ def plot_feature_counts_altair(
     )
     order = feature_counts.sort_values().index.tolist()
 
-    cmap = plt.get_cmap("tab10")
+    cmap = plt.colormaps["tab10"]
     palette = [to_hex(cmap(i)) for i in range(10)]
     random.seed("39")
     random.shuffle(palette)

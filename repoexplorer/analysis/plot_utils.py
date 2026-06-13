@@ -226,7 +226,7 @@ def build_shared_color_map(all_data_dict, column, threshold=0.02):
     if column == "license":
         unique_labels.append("None")
     # Generate color map
-    cmap = matplotlib.colormaps.get_cmap('tab20').resampled(len(unique_labels))
+    cmap = plt.colormaps['tab20'].resampled(len(unique_labels))
     return dict(zip(unique_labels, [cmap(i) for i in range(len(unique_labels))]))
 
 

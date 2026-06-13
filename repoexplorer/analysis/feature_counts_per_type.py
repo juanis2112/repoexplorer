@@ -94,7 +94,7 @@ def plot_feature_counts_per_type(
 
     # Default colors for each type_prediction_gpt_5_mini
     category_list = grouped.columns.tolist()
-    cmap = plt.get_cmap('tab20')
+    cmap = plt.colormaps['tab20']
     category_colors = {cat: cmap(i) for i, cat in enumerate(category_list)}
 
     if ax is None:
