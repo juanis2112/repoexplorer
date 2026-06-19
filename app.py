@@ -1607,69 +1607,75 @@ with ui.navset_pill(id="tab", selected="Overview"):
                 ui.markdown(
                     "**Average score per Security Metric**"
                 )
-                @render.plot
+                @render_altair
                 def security_metric_averages_heatmap():
                     df_avg = security_metric_averages_df()
-                    n = len(df_avg)
-                    fig_h = max(7.0, 0.38 * n + 1.2)
-                    # Narrow width → less-wide “Average” cells (heatmap column)
-                    fig, ax = plt.subplots(figsize=(3.5, fig_h))
-                    if df_avg.empty or df_avg["Average"].notna().sum() == 0:
-                        ax.text(
-                            0.5,
-                            0.5,
-                            "No numeric scores to average\n(after excluding −1)",
-                            ha="center",
-                            va="center",
-                            transform=ax.transAxes,
-                            fontsize=12,
-                        )
-                        ax.set_axis_off()
-                        return fig
 
-                    plot_mat = df_avg.set_index("Metric")[["Average"]]
-                    _ann = []
-                    for metric, row in plot_mat.iterrows():
-                        v = row["Average"]
-                        if str(metric).strip() == "":
-                            _ann.append("")
-                        elif pd.notna(v):
-                            _ann.append(f"{v:.2f}")
-                        else:
-                            _ann.append("—")
-                    annot_mat = pd.DataFrame(
-                        _ann, index=plot_mat.index, columns=["Average"]
+                    if df_avg.empty or df_avg["Average"].notna().sum() == 0:
+                        return (
+                            alt.Chart(pd.DataFrame({"Metric": [], "x": [], "Average": []}))
+                            .mark_rect()
+                            .properties(title="Metric averages")
+                        )
+
+                    df_avg = df_avg.copy()
+                    df_avg["Label"] = df_avg["Average"].apply(
+                        lambda v: f"{v:.2f}" if pd.notna(v) else ""
                     )
-                    cmap = plt.colormaps["RdYlGn"]
-                    mask = plot_mat.isna()
-                    sns.heatmap(
-                        plot_mat,
-                        annot=annot_mat,
-                        fmt="",
-                        cmap=cmap,
-                        vmin=0,
-                        vmax=10,
-                        mask=mask,
-                        linewidths=0.6,
-                        linecolor="white",
-                        ax=ax,
-                        cbar=False,
+                    df_avg["x"] = "Average"
+                    metric_order = df_avg["Metric"].tolist()
+
+                    # Exclude spacer row (Metric=" ") from rendering
+                    plot_df = df_avg[df_avg["Metric"].str.strip() != ""].copy()
+
+                    rects = (
+                        alt.Chart(plot_df)
+                        .mark_rect(stroke="white", strokeWidth=0.6)
+                        .encode(
+                            x=alt.X(
+                                "x:N",
+                                title="",
+                                axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE),
+                            ),
+                            y=alt.Y(
+                                "Metric:N",
+                                sort=metric_order,
+                                title="",
+                                axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE),
+                            ),
+                            color=alt.Color(
+                                "Average:Q",
+                                scale=alt.Scale(scheme="redyellowgreen", domain=[0, 10]),
+                                legend=None,
+                            ),
+                            tooltip=[
+                                alt.Tooltip("Metric:N"),
+                                alt.Tooltip("Average:Q", title="Average", format=".2f"),
+                            ],
+                        )
                     )
-                    ax.set_xlabel("")
-                    ax.set_ylabel("")
-                    ax.set_title("Metric averages")
-                    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=9)
-                    plt.setp(ax.get_xticklabels(), fontsize=8)
-                    # Spacer row adds gap before “Total score”; hide its tick/label (no empty tick).
-                    for i, lab in enumerate(ax.get_yticklabels()):
-                        if not lab.get_text().strip():
-                            lab.set_visible(False)
-                            yticks = ax.yaxis.get_major_ticks()
-                            if i < len(yticks):
-                                yticks[i].tick1line.set_visible(False)
-                                yticks[i].tick2line.set_visible(False)
-                    fig.tight_layout()
-                    return fig
+
+                    texts = (
+                        alt.Chart(plot_df)
+                        .mark_text(fontSize=_OVERVIEW_LABEL_SIZE, color="black")
+                        .encode(
+                            x=alt.X("x:N"),
+                            y=alt.Y("Metric:N", sort=metric_order),
+                            text="Label:N",
+                        )
+                    )
+
+                    return (
+                        (rects + texts)
+                        .properties(
+                            width=alt.Step(120),
+                            height=alt.Step(28),
+                            title="Metric averages",
+                        )
+                        .configure_title(fontSize=_OVERVIEW_TITLE_SIZE, anchor="middle")
+                        .configure_axis(titleFontSize=_OVERVIEW_LABEL_SIZE)
+                        .configure_view(stroke=None)
+                    )
 
 # ------------------------------------ Filtered DataFrame ----------------------------------------------
 
