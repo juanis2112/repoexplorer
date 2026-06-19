@@ -3,6 +3,7 @@
 
 import pandas as pd
 import matplotlib.pyplot as plt
+import altair as alt
 
 
 _BUCKET_LABELS = ["0-10", "11-100", "101-1000", "1K-10K", "10K+"]
@@ -110,3 +111,89 @@ def plot_stars_distribution_bar(
         ax.set_ylim(ylim)
     else:
         ax.set_ylim(0, ymax * 1.08)
+
+
+def plot_stars_distribution_bar_altair(
+    filtered_data,
+    acronym="",
+    label_size=10,
+    title_size=12,
+    textprops=9,
+):
+    """Altair bar chart: count of repositories per stars bucket."""
+    width = "container"
+    height = "container"
+
+    if (
+        filtered_data is None
+        or (hasattr(filtered_data, "empty") and filtered_data.empty)
+        or _VALUE_COL not in filtered_data.columns
+    ):
+        return (
+            alt.Chart(pd.DataFrame({"bucket": [], "Count": []}))
+            .mark_bar()
+            .properties(width=width, height=height, title="Stars Distribution")
+        )
+
+    total = len(filtered_data)
+    buckets = _values_to_bucket_labels(filtered_data[_VALUE_COL])
+    counts = (
+        buckets.dropna()
+        .value_counts()
+        .reindex(_BUCKET_LABELS, fill_value=0)
+        .reset_index()
+    )
+    counts.columns = ["bucket", "Count"]
+    counts["Label"] = counts["Count"].apply(lambda c: f"{c / total * 100:.1f}%")
+    y_max = int(counts["Count"].max() * 1.15) + 1
+
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+    color_scale = alt.Scale(domain=_BUCKET_LABELS, range=colors)
+
+    bars = (
+        alt.Chart(counts)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "bucket:N",
+                sort=_BUCKET_LABELS,
+                title="Stars (bucket)",
+                axis=alt.Axis(labelAngle=-30, labelFontSize=label_size),
+            ),
+            y=alt.Y(
+                "Count:Q",
+                title="Number of repositories",
+                scale=alt.Scale(domain=[0, y_max]),
+                axis=alt.Axis(grid=True, labelFontSize=label_size),
+            ),
+            color=alt.Color("bucket:N", scale=color_scale, legend=None),
+            tooltip=[
+                alt.Tooltip("bucket:N", title="Bucket"),
+                alt.Tooltip("Count:Q", title="Count"),
+            ],
+        )
+    )
+
+    labels = (
+        alt.Chart(counts)
+        .mark_text(
+            align="center", baseline="bottom", dy=-4, fontSize=textprops, color="black"
+        )
+        .encode(
+            x=alt.X("bucket:N", sort=_BUCKET_LABELS),
+            y=alt.Y("Count:Q"),
+            text="Label:N",
+        )
+    )
+
+    title = f"Stars Distribution (Total: {total})"
+    if acronym:
+        title = f"{acronym} {title}"
+
+    return (
+        (bars + labels)
+        .properties(width=width, height=height, title=title)
+        .configure_title(fontSize=title_size, anchor="middle")
+        .configure_axis(titleFontSize=label_size)
+        .configure_view(stroke=None)
+    )

@@ -9,6 +9,7 @@ from shiny import session as shiny_session
 from shiny import ui as sui
 from shinywidgets import render_altair
 from faicons import icon_svg
+import altair as alt
 import matplotlib.pyplot as plt
 import seaborn as sns
 import io
@@ -25,13 +26,21 @@ from repoexplorer.analysis.feature_counts import plot_feature_counts, plot_featu
 from repoexplorer.analysis.university_distribution import plot_university_distribution
 from repoexplorer.analysis.feature_heatmap_per_stars import plot_feature_heatmap_by_star_bucket
 from repoexplorer.analysis.commit_history import plot_commit_history
-from repoexplorer.analysis.stars_distribution_bar import plot_stars_distribution_bar
-from repoexplorer.analysis.forks_distribution_bar import plot_forks_distribution_bar
+from repoexplorer.analysis.stars_distribution_bar import (
+    plot_stars_distribution_bar,
+    plot_stars_distribution_bar_altair,
+)
+from repoexplorer.analysis.forks_distribution_bar import (
+    plot_forks_distribution_bar,
+    plot_forks_distribution_bar_altair,
+)
 from repoexplorer.analysis.release_downloads_distribution_bar import (
     plot_release_downloads_distribution_bar,
+    plot_release_downloads_distribution_bar_altair,
 )
 from repoexplorer.analysis.contributors_distribution_bar import (
     plot_contributors_distribution_bar,
+    plot_contributors_distribution_bar_altair,
 )
 from repoexplorer.analysis.bus_factor_distribution_bar import (
     plot_bus_factor_distribution_bar,
@@ -61,7 +70,7 @@ if "OPENAI_MODEL" not in os.environ:
 
 # Data/parquet/{acronym}/repositories.parquet (case-insensitive acronym match)
 # Optional fast path: Data/parquet/repositories_combined.parquet (single pre-merged file)
-PARQUET_BASE = "Data/parquet"
+PARQUET_BASE = "Data/parquet/sample"
 # COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_combined_clean.parquet")
 # SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_combined_clean.parquet")
 
@@ -1358,61 +1367,49 @@ with ui.navset_pill(id="tab", selected="Overview"):
             with ui.div():
                 with ui.layout_columns():
                     with ui.card():
-                        @render.plot
+                        @render_altair
                         def plot_impact_stars():
-                            fig, ax = plt.subplots(figsize=(8, 6))
-                            plot_stars_distribution_bar(
+                            return plot_stars_distribution_bar_altair(
                                 filtered_df(),
                                 acronym="",
-                                ax=ax,
-                                label_size=9,
-                                title_size=10,
-                                textprops=9,
+                                label_size=_OVERVIEW_LABEL_SIZE,
+                                title_size=_OVERVIEW_TITLE_SIZE,
+                                textprops=_OVERVIEW_BAR_PCT_SIZE,
                             )
-                            return fig
 
                     with ui.card():
-                        @render.plot
+                        @render_altair
                         def plot_impact_forks():
-                            fig, ax = plt.subplots(figsize=(8, 6))
-                            plot_forks_distribution_bar(
+                            return plot_forks_distribution_bar_altair(
                                 filtered_df(),
                                 acronym="",
-                                ax=ax,
-                                label_size=9,
-                                title_size=10,
-                                textprops=9,
+                                label_size=_OVERVIEW_LABEL_SIZE,
+                                title_size=_OVERVIEW_TITLE_SIZE,
+                                textprops=_OVERVIEW_BAR_PCT_SIZE,
                             )
-                            return fig
 
                 with ui.layout_columns():
                     with ui.card():
-                        @render.plot
+                        @render_altair
                         def plot_impact_downloads():
-                            fig, ax = plt.subplots(figsize=(8, 6))
-                            plot_release_downloads_distribution_bar(
+                            return plot_release_downloads_distribution_bar_altair(
                                 filtered_df(),
                                 acronym="",
-                                ax=ax,
-                                label_size=9,
-                                title_size=10,
-                                textprops=9,
+                                label_size=_OVERVIEW_LABEL_SIZE,
+                                title_size=_OVERVIEW_TITLE_SIZE,
+                                textprops=_OVERVIEW_BAR_PCT_SIZE,
                             )
-                            return fig
 
                     with ui.card():
-                        @render.plot
+                        @render_altair
                         def plot_impact_contributors():
-                            fig, ax = plt.subplots(figsize=(8, 6))
-                            plot_contributors_distribution_bar(
+                            return plot_contributors_distribution_bar_altair(
                                 filtered_df(),
                                 acronym="",
-                                ax=ax,
-                                label_size=9,
-                                title_size=10,
-                                textprops=9,
+                                label_size=_OVERVIEW_LABEL_SIZE,
+                                title_size=_OVERVIEW_TITLE_SIZE,
+                                textprops=_OVERVIEW_BAR_PCT_SIZE,
                             )
-                            return fig
 
     # ------------------------------------ Sustainability ----------------------------------------------
     with ui.nav_panel("Sustainability"):
