@@ -3,6 +3,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
+import polars as pl
 from shiny.express import input, ui, render
 from shiny import reactive
 from shiny import session as shiny_session
@@ -298,21 +299,25 @@ def _make_language_combined_fig(
     return fig
 
 
-# Read data from public bucket 
+# Read data from public bucket
 def read_parquet_from_s3_public(bucket_name, object_key, columns=None):
     url = f"https://{bucket_name}.s3.amazonaws.com/{object_key}"
-    return pd.read_parquet(url, columns=columns)
+    return pl.read_parquet(url, columns=columns)
 
-def optimize_dtypes(df: pd.DataFrame):
-    for col in ["stargazers_count", "forks_count", "watchers_count",
-                "open_issues_count", "subscribers_count", "contributor_count",
-                "bus_factor", "release_downloads"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int32")
+def optimize_dtypes(df: pl.DataFrame) -> pl.DataFrame:
+    int_cols = [
+        "stargazers_count", "forks_count", "watchers_count",
+        "open_issues_count", "subscribers_count", "contributor_count",
+        "bus_factor", "release_downloads",
+    ]
+    exprs = [
+        pl.col(c).cast(pl.Int32, strict=False)
+        for c in int_cols if c in df.columns
+    ]
     if "affiliation_prediction_gpt_5_mini" in df.columns:
-        df["affiliation_prediction_gpt_5_mini"] = pd.to_numeric(
-            df["affiliation_prediction_gpt_5_mini"], errors="coerce"
-        ).astype("float32")
+        exprs.append(pl.col("affiliation_prediction_gpt_5_mini").cast(pl.Float32, strict=False))
+    if exprs:
+        df = df.with_columns(exprs)
     return df
 
 #------------------------------------ Styling ---------------------------------------------
@@ -482,24 +487,25 @@ ui.tags.script("""
 
 if DATA == "remote":
     # Usage Shiny app
-    df = read_parquet_from_s3_public("repoexplorer-data", "repositories_reduced_combined_stars_gt_0.parquet", columns=COLUMNS_TO_LOAD)
-    df_security = read_parquet_from_s3_public("repoexplorer-data", "security_reduced_combined_stars_gt_0.parquet")
+    _df_pl = read_parquet_from_s3_public("repoexplorer-data", "repositories_reduced_combined_stars_gt_0.parquet", columns=COLUMNS_TO_LOAD)
+    _df_security_pl = read_parquet_from_s3_public("repoexplorer-data", "security_reduced_combined_stars_gt_0.parquet")
 
 else:
     # Load main repositories table
-    cload = COLUMNS_TO_LOAD
-    df = pd.read_parquet(COMBINED_PARQUET, columns=cload)
-    if "university" not in df.columns:
-        df["university"] = "Unknown"
-    df_security = pd.DataFrame()
+    _df_pl = pl.read_parquet(COMBINED_PARQUET, columns=COLUMNS_TO_LOAD)
+    if "university" not in _df_pl.columns:
+        _df_pl = _df_pl.with_columns(pl.lit("Unknown").alias("university"))
+    _df_security_pl = pl.DataFrame()
     if os.path.isfile(SECURITY_PARQUET):
         try:
-            df_security = pd.read_parquet(SECURITY_PARQUET)
+            _df_security_pl = pl.read_parquet(SECURITY_PARQUET)
         except Exception:
             logging.exception("Failed to load security parquet %s", SECURITY_PARQUET)
-            df_security = pd.DataFrame()
+            _df_security_pl = pl.DataFrame()
 
-df = optimize_dtypes(df)
+_df_pl = optimize_dtypes(_df_pl)
+df = _df_pl.to_pandas()
+df_security = _df_security_pl.to_pandas() if not _df_security_pl.is_empty() else pd.DataFrame()
 
 
 # # Load organizations table
