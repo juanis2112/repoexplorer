@@ -18,3 +18,4 @@ querychat>=0.1.0
 altair
 vl-convert-python
 shinywidgets
+polars
