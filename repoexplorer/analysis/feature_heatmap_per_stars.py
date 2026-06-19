@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import pandas as pd
+import altair as alt
 
 import pandas as pd
 import seaborn as sns
@@ -126,3 +127,137 @@ def plot_feature_heatmap_by_star_bucket(
     cbar.set_label('% with feature', fontsize=label_size)
 
     return ax
+
+
+def plot_feature_heatmap_by_star_bucket_altair(
+    df,
+    features,
+    star_col="stargazers_count",
+    label_size=10,
+    title_size=12,
+    annotations_size=9,
+):
+    """Altair heatmap: % of repos with each feature, grouped by star bucket."""
+    width = "container"
+    height = "container"
+
+    feature_display_names = {
+        'description': 'Description',
+        'readme': 'README',
+        'license': 'License',
+        'code_of_conduct_file': 'Code of Conduct',
+        'contributing': 'Contributing Guide',
+        'security_policy': 'Security Policy',
+        'issue_templates': 'Issue Templates',
+        'pull_request_template': 'PR Template',
+        'type_prediction_gpt_5_mini': "Project Type",
+    }
+
+    star_buckets = ['0–10', '11–50', '51–100', '101–200', '>200']
+
+    if (
+        df is None
+        or (hasattr(df, "empty") and df.empty)
+        or star_col not in df.columns
+    ):
+        return (
+            alt.Chart(pd.DataFrame({"Feature": [], "Bucket": [], "Percentage": []}))
+            .mark_rect()
+            .properties(width=width, height=height, title="Community Files by # Stars")
+        )
+
+    total_repositories = len(df)
+    df = df.copy()
+
+    def get_star_bucket(stars):
+        if stars <= 10:
+            return '0–10'
+        elif stars <= 50:
+            return '11–50'
+        elif stars <= 100:
+            return '51–100'
+        elif stars <= 200:
+            return '101–200'
+        else:
+            return '>200'
+
+    df["star_bucket"] = pd.to_numeric(df[star_col], errors="coerce").apply(
+        lambda s: get_star_bucket(s) if pd.notna(s) else None
+    )
+
+    # Build percentage rows for each feature × bucket
+    rows = []
+    feature_order = []
+    for feature in features:
+        if feature not in df.columns:
+            continue
+        display = feature_display_names.get(feature, feature)
+        feature_order.append(display)
+        for bucket in star_buckets:
+            subset = df[df["star_bucket"] == bucket]
+            total_b = len(subset)
+            count = subset[feature].notna().sum() if total_b > 0 else 0
+            pct = (count / total_b * 100) if total_b > 0 else 0.0
+            rows.append({"Feature": display, "Bucket": bucket, "Percentage": round(pct, 1)})
+
+    # Average row
+    for bucket in star_buckets:
+        bucket_rows = [r for r in rows if r["Bucket"] == bucket]
+        avg = sum(r["Percentage"] for r in bucket_rows) / len(bucket_rows) if bucket_rows else 0.0
+        rows.append({"Feature": "Average", "Bucket": bucket, "Percentage": round(avg, 1)})
+    feature_order.append("Average")
+
+    long_df = pd.DataFrame(rows)
+    long_df["Label"] = long_df["Percentage"].apply(lambda p: f"{p:.0f}")
+
+    rects = (
+        alt.Chart(long_df)
+        .mark_rect()
+        .encode(
+            x=alt.X(
+                "Bucket:N",
+                sort=star_buckets,
+                title="# Star Bucket",
+                scale=alt.Scale(paddingOuter=0, paddingInner=0.05),
+                axis=alt.Axis(labelFontSize=label_size, labelAngle=-30),
+            ),
+            y=alt.Y(
+                "Feature:N",
+                sort=feature_order,
+                title="Community File",
+                scale=alt.Scale(paddingOuter=0, paddingInner=0.05),
+                axis=alt.Axis(labelFontSize=label_size),
+            ),
+            color=alt.Color(
+                "Percentage:Q",
+                scale=alt.Scale(scheme="redyellowgreen", domain=[0, 100]),
+                legend=alt.Legend(title="% with feature", labelFontSize=label_size, titleFontSize=label_size, titleOrient="right"),
+            ),
+            tooltip=[
+                alt.Tooltip("Feature:N"),
+                alt.Tooltip("Bucket:N", title="Star Bucket"),
+                alt.Tooltip("Percentage:Q", title="%", format=".1f"),
+            ],
+        )
+    )
+
+    texts = (
+        alt.Chart(long_df)
+        .mark_text(fontSize=annotations_size, color="black")
+        .encode(
+            x=alt.X("Bucket:N", sort=star_buckets),
+            y=alt.Y("Feature:N", sort=feature_order),
+            text="Label:N",
+        )
+    )
+
+    title = f"Community Files by # Stars (Total: {total_repositories})"
+
+    return (
+        (rects + texts)
+        .properties(width=width, height=alt.Step(35), title=title)
+        .configure_title(fontSize=title_size, anchor="middle")
+        .configure_axis(titleFontSize=label_size)
+        .configure_legend(gradientLength=alt.ExprRef("height"))
+        .configure_view(stroke=None)
+    )

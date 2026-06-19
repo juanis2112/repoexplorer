@@ -21,10 +21,10 @@ from repoexplorer.analysis.language_distribution_by_type import plot_language_di
 from repoexplorer.analysis.language_distribution import plot_language_distribution, plot_language_distribution_altair
 from repoexplorer.analysis.license_distribution_by_type import plot_license_distribution_by_type, plot_license_distribution_by_type_altair
 from repoexplorer.analysis.license_distribution import plot_license_distribution, plot_license_distribution_altair
-from repoexplorer.analysis.feature_counts_per_type import plot_feature_counts_per_type
+from repoexplorer.analysis.feature_counts_per_type import plot_feature_counts_per_type, plot_feature_counts_per_type_altair
 from repoexplorer.analysis.feature_counts import plot_feature_counts, plot_feature_counts_altair
 from repoexplorer.analysis.university_distribution import plot_university_distribution
-from repoexplorer.analysis.feature_heatmap_per_stars import plot_feature_heatmap_by_star_bucket
+from repoexplorer.analysis.feature_heatmap_per_stars import plot_feature_heatmap_by_star_bucket, plot_feature_heatmap_by_star_bucket_altair
 from repoexplorer.analysis.commit_history import plot_commit_history
 from repoexplorer.analysis.stars_distribution_bar import (
     plot_stars_distribution_bar,
@@ -44,9 +44,11 @@ from repoexplorer.analysis.contributors_distribution_bar import (
 )
 from repoexplorer.analysis.bus_factor_distribution_bar import (
     plot_bus_factor_distribution_bar,
+    plot_bus_factor_distribution_bar_altair,
 )
 from repoexplorer.analysis.contributor_count_bucket_bar import (
     plot_contributor_count_bucket_bar,
+    plot_contributor_count_bucket_bar_altair,
 )
 from dotenv import load_dotenv
 
@@ -70,7 +72,7 @@ if "OPENAI_MODEL" not in os.environ:
 
 # Data/parquet/{acronym}/repositories.parquet (case-insensitive acronym match)
 # Optional fast path: Data/parquet/repositories_combined.parquet (single pre-merged file)
-PARQUET_BASE = "Data/parquet/sample"
+PARQUET_BASE = "Data/parquet"
 # COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_combined_clean.parquet")
 # SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_combined_clean.parquet")
 
@@ -1413,7 +1415,7 @@ with ui.navset_pill(id="tab", selected="Overview"):
 
     # ------------------------------------ Sustainability ----------------------------------------------
     with ui.nav_panel("Sustainability"):
-        with ui.layout_columns(col_widths=(5, 7)):
+        with ui.layout_columns(col_widths=(4, 8)):
             with ui.card():
                 ui.markdown(
                     "**Sustainability indicators per University**"
@@ -1531,63 +1533,51 @@ with ui.navset_pill(id="tab", selected="Overview"):
 
                 with ui.layout_columns():
                     with ui.card():
-                        @render.plot
+                        @render_altair
                         def plot_files():
-                            fig, ax = plt.subplots(figsize=(8, 6))
-                            plot_feature_counts_per_type(
+                            return plot_feature_counts_per_type_altair(
                                 filtered_df(),
                                 FEATURES,
                                 acronym="",
-                                ax=ax,
-                                label_size=8,
-                                title_size=10,
-                                textprops=8,
+                                label_size=_OVERVIEW_LABEL_SIZE,
+                                title_size=_OVERVIEW_TITLE_SIZE,
+                                textprops=_OVERVIEW_BAR_PCT_SIZE,
                             )
-                            return fig
 
                     with ui.card():
-                        @render.plot
+                        @render_altair
                         def plot_heatmap():
-                            fig, ax = plt.subplots(figsize=(8, 6))
-                            plot_feature_heatmap_by_star_bucket(
+                            return plot_feature_heatmap_by_star_bucket_altair(
                                 filtered_df(),
                                 FEATURES,
                                 star_col="stargazers_count",
-                                ax=ax,
-                                label_size=8,
-                                title_size=10,
-                                annotations_size=8,
+                                label_size=_OVERVIEW_LABEL_SIZE,
+                                title_size=_OVERVIEW_TITLE_SIZE,
+                                annotations_size=_OVERVIEW_BAR_PCT_SIZE,
                             )
-                            return fig
 
                 with ui.layout_columns():
                     with ui.card():
-                        @render.plot
+                        @render_altair
                         def plot_bus_factor_distribution():
-                            fig, ax = plt.subplots(figsize=(8, 6))
-                            plot_bus_factor_distribution_bar(
+                            return plot_bus_factor_distribution_bar_altair(
                                 filtered_df(),
                                 acronym="",
-                                ax=ax,
-                                label_size=8,
-                                title_size=10,
-                                textprops=8,
+                                label_size=_OVERVIEW_LABEL_SIZE,
+                                title_size=_OVERVIEW_TITLE_SIZE,
+                                textprops=_OVERVIEW_BAR_PCT_SIZE,
                             )
-                            return fig
 
                     with ui.card():
-                        @render.plot
+                        @render_altair
                         def plot_contributor_count_buckets():
-                            fig, ax = plt.subplots(figsize=(8, 6))
-                            plot_contributor_count_bucket_bar(
+                            return plot_contributor_count_bucket_bar_altair(
                                 filtered_df(),
                                 acronym="",
-                                ax=ax,
-                                label_size=8,
-                                title_size=10,
-                                textprops=8,
+                                label_size=_OVERVIEW_LABEL_SIZE,
+                                title_size=_OVERVIEW_TITLE_SIZE,
+                                textprops=_OVERVIEW_BAR_PCT_SIZE,
                             )
-                            return fig
 
     # ------------------------------------ Security (scorecard table) --------------------------------
     with ui.nav_panel("Security"):

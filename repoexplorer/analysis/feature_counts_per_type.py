@@ -4,6 +4,8 @@
 import matplotlib.pyplot as plt
 import random
 import pandas as pd
+import altair as alt
+from matplotlib.colors import to_hex
 
 
 
@@ -188,3 +190,126 @@ def plot_feature_counts_per_type(
         plt.savefig(f'plots/{acronym}/CountPerFeatureTop_Stacked.png', dpi=300)
 
     return order, category_colors
+
+
+def plot_feature_counts_per_type_altair(
+    filtered_data,
+    features,
+    acronym="",
+    label_size=10,
+    title_size=12,
+    textprops=9,
+):
+    """Altair stacked bar chart of feature presence counts across GPT-predicted project types."""
+    width = "container"
+    height = "container"
+
+    feature_display_names = {
+        'description': 'Description',
+        'readme': 'README',
+        'license': 'License',
+        'code_of_conduct_file': 'Code of Conduct',
+        'contributing': 'Contributing Guide',
+        'security_policy': 'Security Policy',
+        'issue_templates': 'Issue Templates',
+        'pull_request_template': 'PR Template',
+        'type_prediction_gpt_5_mini': "Project Type",
+    }
+
+    if (
+        filtered_data is None
+        or (hasattr(filtered_data, "empty") and filtered_data.empty)
+        or "type_prediction_gpt_5_mini" not in filtered_data.columns
+    ):
+        return (
+            alt.Chart(pd.DataFrame({"feature": [], "project_type": [], "count": []}))
+            .mark_bar()
+            .properties(width=width, height=height, title="Community Files")
+        )
+
+    total_repositories = len(filtered_data)
+    data = filtered_data[features + ["type_prediction_gpt_5_mini"]].copy()
+    data = data.rename(columns=feature_display_names)
+
+    grouped = data.groupby("Project Type").apply(lambda g: g.notna().sum())
+    grouped = grouped.T  # features as rows, project types as columns
+
+    total_counts = grouped.sum(axis=1)
+    order = total_counts.sort_values().index.tolist()
+    grouped = grouped.loc[order]
+
+    category_list = grouped.columns.tolist()
+    cmap = plt.colormaps["tab20"]
+    palette = [to_hex(cmap(i)) for i in range(len(category_list))]
+    color_scale = alt.Scale(domain=category_list, range=palette)
+
+    # Build long-format dataframe
+    rows = []
+    for feature in order:
+        for proj_type in category_list:
+            rows.append({
+                "feature": feature,
+                "project_type": proj_type,
+                "count": int(grouped.loc[feature, proj_type]),
+            })
+    long_df = pd.DataFrame(rows)
+
+    # Totals per feature for percentage labels
+    totals = long_df.groupby("feature")["count"].sum().reset_index()
+    totals["pct"] = totals["count"].apply(
+        lambda c: f"{c / total_repositories * 100:.1f}%"
+    )
+
+    bars = (
+        alt.Chart(long_df)
+        .mark_bar()
+        .encode(
+            x=alt.X(
+                "feature:N",
+                sort=order,
+                title="Community File",
+                axis=alt.Axis(labelAngle=-40, labelFontSize=label_size),
+            ),
+            y=alt.Y(
+                "count:Q",
+                title="Repository Count",
+                stack="zero",
+                axis=alt.Axis(grid=True, labelFontSize=label_size),
+            ),
+            color=alt.Color(
+                "project_type:N",
+                scale=color_scale,
+                title="Project Type",
+                legend=alt.Legend(labelFontSize=label_size, titleFontSize=label_size),
+            ),
+            tooltip=[
+                alt.Tooltip("feature:N", title="Feature"),
+                alt.Tooltip("project_type:N", title="Project Type"),
+                alt.Tooltip("count:Q", title="Count"),
+            ],
+        )
+    )
+
+    labels = (
+        alt.Chart(totals)
+        .mark_text(
+            align="center", baseline="bottom", dy=-4, fontSize=textprops, color="black"
+        )
+        .encode(
+            x=alt.X("feature:N", sort=order),
+            y=alt.Y("count:Q"),
+            text="pct:N",
+        )
+    )
+
+    title = f"Community Files (Total: {total_repositories})"
+    if acronym:
+        title = f"{acronym} {title}"
+
+    return (
+        (bars + labels)
+        .properties(width=width, height=height, title=title)
+        .configure_title(fontSize=title_size, anchor="middle")
+        .configure_axis(titleFontSize=label_size)
+        .configure_view(stroke=None)
+    )
