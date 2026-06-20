@@ -379,6 +379,14 @@ aside .form-label,
 """)
 
 ui.tags.style("""
+/* DataGrid column headers: allow \n in column names to wrap to multiple lines */
+.shiny-data-grid thead th {
+    white-space: pre-line !important;
+    text-align: center !important;
+}
+""")
+
+ui.tags.style("""
 /* Altair / Vega chart hover tooltips */
 #vg-tooltip-element,
 #vg-tooltip-element table,
@@ -543,9 +551,7 @@ _normalize_license_column(df)
 
 ui.page_opts(title="Open Source Repository Browser", fillable=True)
 
-# ======================================== Sidebar  ===============================================
-
-# ------------------------------------ Manual Filters ----------------------------------------------
+# ======================================== Filter options =========================================
 
 licenses = df["license"].dropna().unique().tolist() if "license" in df.columns else []
 languages = df["language"].unique().tolist() if "language" in df.columns else []
@@ -563,7 +569,6 @@ _m = pd.to_numeric(_df_08["release_downloads"], errors="coerce").max() if not _d
 _slider_max_downloads = int(_m) if _m is not None and not pd.isna(_m) else 1000
 
 # ------------------------------------ QueryChat Config -------------------------------------------
-# Chat uses only repos with prediction threshold >= 0.8 (same as default slider)
 if ENABLE_CHAT:
     _greeting_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "greeting.md")
     with open(_greeting_path, encoding="utf-8") as _f:
@@ -577,55 +582,8 @@ if ENABLE_CHAT:
 else:
     querychat_config = None
 
-with ui.sidebar(open="open", bg="#f8f8f8", width="300px"):  
-   with ui.navset_pill(id="side_tab"): 
-       with ui.nav_panel("Manual Filters"):
-           max_threshold = pd.to_numeric(df["affiliation_prediction_gpt_5_mini"], errors="coerce").max()
-           ui.input_slider("slider_threshold", "Prediction Threshold", min=0, max=1, value=[0.8, 1])  
-           
-           ui.input_selectize(  
-                "university",  
-                "University:",  
-                universities,
-                multiple=True,  
-            ) 
-           ui.input_selectize(  
-                "type",  
-                "Project Type:",  
-                types,
-                multiple=True,  
-            )  
-           ui.input_selectize(  
-                "license",  
-                "License:",  
-                licenses,
-                multiple=True,  
-            )     
-           ui.input_selectize(  
-                "language",  
-                "Language:",  
-                languages,
-                multiple=True,  
-            )  
-           ui.input_slider("slider_stars", "# Stars", min=0, max=_slider_max_stars, value=[0, _slider_max_stars])
-           ui.input_slider("slider_forks", "# Forks", min=0, max=_slider_max_forks, value=[0, _slider_max_forks])
-           ui.input_slider("slider_downloads", "# Release Downloads", min=0, max=_slider_max_downloads, value=[0, _slider_max_downloads])  
-            
-            
-
-       if ENABLE_CHAT:
-           with ui.nav_panel("Chat Bot"):
-               qc.ui("chat")  # may return True; do not use as last expression
-   
-   # Reset button at the bottom of the sidebar
-   ui.br()
-   ui.br()
-   ui.input_action_button("reset_filters", "Reset All Filters", class_="btn-danger")
-   ui.HTML("")  # prevent any prior return value (e.g. True) from rendering
-
 # Assign chat server in a function so its return value is not rendered as "True" in the main panel
 chat = None
-
 
 if ENABLE_CHAT:
     def _init_chat_server():
@@ -641,7 +599,6 @@ ui.HTML("")
 @reactive.effect
 @reactive.event(input.reset_filters)
 def reset_all_filters():
-    # Reset manual filter inputs
     ui.update_selectize("university", selected=[])
     ui.update_selectize("type", selected=[])
     ui.update_selectize("license", selected=[])
@@ -651,29 +608,23 @@ def reset_all_filters():
     ui.update_slider("slider_downloads", value=[0, _slider_max_downloads])
     ui.update_text("table_search", value="")
 
-    # Ask the chatbot to reset its filters (sends "reset all filters" so the LLM can invoke reset_dashboard)
     if ENABLE_CHAT:
         try:
             sess = shiny_session.get_current_session()
             if sess is not None:
-                # Send message to chat input so the bot receives "reset all filters" and can clear filters
                 sess.send_input_message("chat-message", {"value": "reset all filters"})
         except Exception:
             pass
 
-# ======================================== Main panel  ===============================================
+# ======================================== Constants & shared resources ============================
 
-#------------------------------------ Overview ----------------------------------------------
+_OVERVIEW_TITLE_SIZE = 14
+_OVERVIEW_LABEL_SIZE = 11
+_OVERVIEW_TEXT_SIZE = 10
+_OVERVIEW_BAR_PCT_SIZE = 11
+_OVERVIEW_PIE_PCT_SIZE = 11
+_TABLE_FONT_SIZE = "14px"
 
-# Typography for Overview tab charts (titles, axis labels, legends, annotations)
-_OVERVIEW_TITLE_SIZE = 16
-_OVERVIEW_LABEL_SIZE = 14
-_OVERVIEW_TEXT_SIZE = 11
-_OVERVIEW_BAR_PCT_SIZE = 14
-_OVERVIEW_PIE_PCT_SIZE = 14
-
-
-# Icons for Overview / Impact value boxes
 ICONS = {
     "repos": icon_svg("code-branch"),
     "contributors": icon_svg("users"),
@@ -690,998 +641,968 @@ _about_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "about.md
 with open(_about_path, encoding="utf-8") as _f:
     _about_md = _f.read()
 
-with ui.navset_pill(id="tab", selected="Overview"):
+# ======================================== Main UI ================================================
+
+with ui.navset_pill(id="main_tab", selected="Repositories"):
+    # ============================= ABOUT TAB =====================================================
     with ui.nav_panel("About"):
         with ui.card():
             ui.markdown(_about_md)
 
-    with ui.nav_panel("Overview"):
-        # Value boxes row
-        with ui.layout_columns(col_widths=(3, 3, 3, 3)):
-            with ui.value_box(showcase=ICONS["repos"]):
-                "Total repositories"
-                @render.express
-                def total_repos():
-                    len(filtered_df())
-
-            with ui.value_box(showcase=ICONS["contributors"]):
-                "Total contributors"
-                @render.express
-                def total_contributors():
-                    data = filtered_df()
-                    # Use numeric contributor_count column if available
-                    if "contributor_count" not in data.columns:
-                        "—"
-                    else:
-                        counts = pd.to_numeric(data["contributor_count"], errors="coerce")
-                        total = int(counts.dropna().sum()) if counts.notna().any() else 0
-                        total
-
-            with ui.value_box(showcase=ICONS["license"]):
-                "Repositories with a license"
-                @render.express
-                def pct_with_license():
-                    data = filtered_df()
-                    if "license" not in data.columns:
-                        "—"
-                    else:
-                        total = len(data)
-                        if total == 0:
-                            "0%"
-                        else:
-                            # After _normalize_license_column, null means no license.
-                            with_license = int(data["license"].notna().sum())
-                            pct = 100.0 * with_license / total
-                            f"{pct:.1f}%"
-
-            with ui.value_box(showcase=ICONS["busfactor"]):
-                "Average bus factor"
-                @render.express
-                def avg_busfactor():
-                    data = filtered_df()
-                    col = "bus_factor"
-                    # Compute across the full repositories table (not just filtered_df)
-                    if col not in data.columns:
-                        "—"
-                    else:
-                        try:
-                            v = pd.to_numeric(data[col], errors="coerce").mean()
-                            f"{v:.1f}" if not pd.isna(v) else "—"
-                        except Exception:
-                            "—"
-
-        # University distribution
-        with ui.layout_columns(col_widths=(5, 7)):
-            
-            with ui.card():
-                @render.data_frame
-                def university_table():
-                    data = filtered_df()
-                    if "university" not in data.columns or data.empty:
-                        return render.DataGrid(pd.DataFrame(columns=["University", "Count"]))
-
-                    # Aggregate repositories per university and feed into a DataGrid.
-                    university_counts = (
-                        data["university"]
-                        .value_counts()
-                        .sort_values(ascending=False)
-                        .rename_axis("University")
-                        .reset_index(name="Count")
-                    )
-                    return render.DataGrid(
-                        university_counts,
-                        width="100%",
-                        height="400px",
-                        styles=[
-                            {
-                                "location": "body",
-                                "cols": [0],  # University name column
-                                "style": {"minWidth": "70%", "width": "70%"},
-                            },
-                            {
-                                "location": "body",
-                                "cols": [1],  # Count column
-                                "style": {"minWidth": "30%", "width": "30%", "textAlign": "right"},
-                            },
-                        ],
-                    )
-            
-            with ui.card(height="450px"):
-                @render_altair
-                def plot_files_combined():
-                    chart = plot_feature_counts_altair(
-                        filtered_df(),
-                        FEATURES,
-                        acronym="",
-                        label_size=_OVERVIEW_LABEL_SIZE,
-                        title_size=_OVERVIEW_TITLE_SIZE,
-                        textprops=_OVERVIEW_BAR_PCT_SIZE,
-                    )
-                    return chart
-
-        with ui.layout_columns(col_widths=(4, 4, 4)):
-            with ui.card():
-                @render_altair
-                def plot_type():
-                    return plot_type_distribution_altair(
-                        filtered_df(),
-                        acronym="",
-                        label_size=_OVERVIEW_LABEL_SIZE,
-                        title_size=_OVERVIEW_TITLE_SIZE,
-                        textprops=_OVERVIEW_PIE_PCT_SIZE,
-                    )
-
-            with ui.card():
-                @render_altair
-                def plot_language_combined():
-                    return plot_language_distribution_altair(
-                        filtered_df(),
-                        acronym="",
-                        label_size=_OVERVIEW_LABEL_SIZE,
-                        title_size=_OVERVIEW_TITLE_SIZE,
-                        textprops=_OVERVIEW_PIE_PCT_SIZE,
-                        other_thres=0.05,
-                    )
-
-            with ui.card():
-                @render_altair
-                def plot_license_combined():
-                    return plot_license_distribution_altair(
-                        filtered_df(),
-                        acronym="",
-                        label_size=_OVERVIEW_LABEL_SIZE,
-                        title_size=_OVERVIEW_TITLE_SIZE,
-                        textprops=_OVERVIEW_PIE_PCT_SIZE,
-                        other_thres=0.02,
-                    )
-        
-        with ui.layout_columns(col_widths=(6, 6)):
-            with ui.card():
-                @render_altair
-                def plot_license():
-                    return plot_license_distribution_by_type_altair(
-                        filtered_df(),
-                        acronym="",
-                        label_size=_OVERVIEW_LABEL_SIZE,
-                        title_size=_OVERVIEW_TITLE_SIZE,
-                        textprops=_OVERVIEW_BAR_PCT_SIZE,
-                        other_thres=0.009,
-                    )
-
-            with ui.card():
-                @render_altair
-                def plot_language():
-                    return plot_language_distribution_by_type_altair(
-                        filtered_df(),
-                        acronym="",
-                        label_size=_OVERVIEW_LABEL_SIZE,
-                        title_size=_OVERVIEW_TITLE_SIZE,
-                        textprops=_OVERVIEW_BAR_PCT_SIZE,
-                        other_thres=0.02,
-                    )
-    
-
-#------------------------------------ Repositories ----------------------------------------------
-    
-    
+    # ============================= REPOSITORIES TAB ===============================================
     with ui.nav_panel("Repositories"):
-        with ui.card(class_="repo-data-card"):
-            ui.tags.div(
-                ui.tags.div(
-                    ui.input_text(
-                        "table_search",
-                        "Search",
-                        placeholder="Search repositories...",
-                        width="100%",
-                    ),
-                    style="flex: 1; min-width: 220px;",
-                ), 
-            )
-            @render.data_frame
-            def display_df():
-                data = repositories_table_df()
-                return render.DataGrid(
-                    data,
-                    height="500px",
-                    selection_mode="row",
-                )
+        with ui.layout_sidebar(fillable=True):
+            with ui.sidebar(open="open", bg="#f8f8f8", width="250px"):
+                with ui.navset_pill(id="side_tab"):
+                    with ui.nav_panel("Manual Filters"):
+                        ui.input_slider("slider_threshold", "Prediction Threshold", min=0, max=1, value=[0.8, 1])
+                        ui.input_selectize("university", "University:", universities, multiple=True)
+                        ui.input_selectize("type", "Project Type:", types, multiple=True)
+                        ui.input_selectize("license", "License:", licenses, multiple=True)
+                        ui.input_selectize("language", "Language:", languages, multiple=True)
+                        ui.input_slider("slider_stars", "# Stars", min=0, max=_slider_max_stars, value=[0, _slider_max_stars])
+                        ui.input_slider("slider_forks", "# Forks", min=0, max=_slider_max_forks, value=[0, _slider_max_forks])
+                        ui.input_slider("slider_downloads", "# Release Downloads", min=0, max=_slider_max_downloads, value=[0, _slider_max_downloads])
 
-            @render.download(
-                filename=lambda: f"repositories_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            )
-            def download_repositories_csv():
-                out_df = repositories_table_df()
-                buf = io.BytesIO()
-                out_df.to_csv(buf, index=False, encoding="utf-8")
-                buf.seek(0)
-                yield buf.getvalue()
-        with ui.card():
-            @render.ui
-            def show_clicked():
-                selected_rows = display_df.cell_selection()["rows"]
+                    if ENABLE_CHAT:
+                        with ui.nav_panel("Chat Bot"):
+                            qc.ui("chat")
 
-                if not selected_rows:
-                    return ""
+                ui.br()
+                ui.br()
+                ui.input_action_button("reset_filters", "Reset All Filters", class_="btn-danger")
+                ui.HTML("")
 
-                # Row position in the grid matches repositories_table_df (search + column drops).
-                view = repositories_table_df()
-                row_pos = selected_rows[0]
-                sel = filtered_df().loc[view.index[row_pos]]
-                selected = sel.iloc[0] if isinstance(sel, pd.DataFrame) else sel
+            # ---- Inner tabs ----
+            with ui.navset_tab(id="repo_tab", selected="Overview"):
 
-                _readme_md = _safe_markdown_text(selected.get("readme"))
-                _contributing_md = _safe_markdown_text(selected.get("contributing"))
-                _security_policy_md = _safe_markdown_text(selected.get("security_policy"))
+                # ---- Overview ----
+                with ui.nav_panel("Overview"):
+                        # University table + value boxes (2x2 grid)
 
-                # Match security metrics row (from security_combined_clean.parquet) by html_url
-                sec_row = None
-                if not df_security.empty and "html_url" in df_security.columns:
-                    _matches = df_security.loc[df_security["html_url"] == selected.get("html_url")]
-                    if not _matches.empty:
-                        sec_row = _matches.iloc[0]
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.card():
+                                ui.markdown("**Repositories per University**")
+                                @render.data_frame
+                                def university_table():
+                                    data = filtered_df()
+                                    if "university" not in data.columns or data.empty:
+                                        return render.DataGrid(pd.DataFrame(columns=["University", "Count"]))
 
-                # Two-column layout:
-                # - Left column: Overview / Impact / Health / Security
-                # - Right column: README / Contributing / Security Policy
-                return sui.layout_columns(
-                    ui.div(
-                        sui.navset_tab(
-                            sui.nav_panel(
-                                "Overview",
-                                ui.p(
-                                    ui.tags.span("Name: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    _safe_display_str(selected.get("full_name")),
-                                ),
-                                ui.p(
-                                    ui.tags.span("University: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    _safe_display_str(selected.get("university"), "Unknown"),
-                                ),
-                                ui.p(
-                                    ui.tags.span("License: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    _safe_display_str(selected.get("license")),
-                                ),
-                                ui.p(
-                                    ui.tags.span("Language: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    _safe_display_str(selected.get("language")),
-                                ),
-                                ui.p(
-                                    ui.tags.span("Project Type: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    _safe_display_str(selected.get("type_prediction_gpt_5_mini")),
-                                ),
-                                ui.p(
-                                    ui.tags.span("Description: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    _safe_display_str(selected.get("description")),
-                                ),
-                                ui.p(
-                                    ui.tags.span("URL: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
-                                    (
-                                        ui.tags.a(
-                                            _safe_display_str(selected.get("html_url"), ""),
-                                            href=_safe_display_str(selected.get("html_url"), ""),
-                                            target="_blank",
-                                        )
-                                        if _has_nonempty_text(selected.get("html_url"))
-                                        else "—"
+                                    university_counts = (
+                                        data["university"]
+                                        .value_counts()
+                                        .sort_values(ascending=False)
+                                        .rename_axis("University")
+                                        .reset_index(name="Count")
+                                    )
+                                    return render.DataGrid(
+                                        university_counts,
+                                        width="100%",
+                                        height="400px",
+                                        styles=[
+                                            {
+                                                "location": "body",
+                                                "cols": [0],
+                                                "style": {"minWidth": "70%", "width": "70%"},
+                                            },
+                                            {
+                                                "location": "body",
+                                                "cols": [1],
+                                                "style": {"minWidth": "30%", "width": "30%", "textAlign": "right"},
+                                            },
+                                        ],
+                                    )
+
+                            with ui.div():
+                                with ui.layout_columns(col_widths=(6, 6)):
+                                    with ui.value_box(showcase=ICONS["repos"]):
+                                        "Total repositories"
+                                        @render.express
+                                        def total_repos():
+                                            len(filtered_df())
+
+                                    with ui.value_box(showcase=ICONS["contributors"]):
+                                        "Total contributors"
+                                        @render.express
+                                        def total_contributors():
+                                            data = filtered_df()
+                                            if "contributor_count" not in data.columns:
+                                                "—"
+                                            else:
+                                                counts = pd.to_numeric(data["contributor_count"], errors="coerce")
+                                                total = int(counts.dropna().sum()) if counts.notna().any() else 0
+                                                total
+
+                                with ui.layout_columns(col_widths=(6, 6)):
+                                    with ui.value_box(showcase=ICONS["license"]):
+                                        "Repositories with a license"
+                                        @render.express
+                                        def pct_with_license():
+                                            data = filtered_df()
+                                            if "license" not in data.columns:
+                                                "—"
+                                            else:
+                                                total = len(data)
+                                                if total == 0:
+                                                    "0%"
+                                                else:
+                                                    with_license = int(data["license"].notna().sum())
+                                                    pct = 100.0 * with_license / total
+                                                    f"{pct:.1f}%"
+
+                                    with ui.value_box(showcase=ICONS["busfactor"]):
+                                        "Average bus factor"
+                                        @render.express
+                                        def avg_busfactor():
+                                            data = filtered_df()
+                                            col = "bus_factor"
+                                            if col not in data.columns:
+                                                "—"
+                                            else:
+                                                try:
+                                                    v = pd.to_numeric(data[col], errors="coerce").mean()
+                                                    f"{v:.1f}" if not pd.isna(v) else "—"
+                                                except Exception:
+                                                    "—"
+
+                        # Type distribution + Community files presence
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.card():
+                                @render_altair
+                                def plot_type():
+                                    return plot_type_distribution_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_PIE_PCT_SIZE,
+                                    )
+
+                            with ui.card():
+                                @render_altair
+                                def plot_files_combined():
+                                    return plot_feature_counts_altair(
+                                        filtered_df(),
+                                        FEATURES,
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                    )
+
+                        # Language + License distributions
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.card():
+                                @render_altair
+                                def plot_language_combined():
+                                    return plot_language_distribution_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_PIE_PCT_SIZE,
+                                        other_thres=0.05,
+                                    )
+
+                            with ui.card():
+                                @render_altair
+                                def plot_license_combined():
+                                    return plot_license_distribution_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_PIE_PCT_SIZE,
+                                        other_thres=0.02,
+                                    )
+        
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.card():
+                                @render_altair
+                                def plot_license():
+                                    return plot_license_distribution_by_type_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                        other_thres=0.009,
+                                    )
+
+                            with ui.card():
+                                @render_altair
+                                def plot_language():
+                                    return plot_language_distribution_by_type_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                        other_thres=0.02,
+                                    )
+    
+
+                                # ---- Browse (repository table + detail) ----
+                with ui.nav_panel("Browse"):
+                        with ui.card(class_="repo-data-card"):
+                            ui.tags.div(
+                                ui.tags.div(
+                                    ui.input_text(
+                                        "table_search",
+                                        "Search",
+                                        placeholder="Search repositories...",
+                                        width="100%",
                                     ),
-                                ),
-                            ),
-                            sui.nav_panel(
-                                "Impact",
-                                ui.tags.table(
-                                    ui.tags.tr(
-                                        ui.tags.th(
-                                            "Metric",
-                                            style=(
-                                                "padding-right: 6px; text-align: left; "
-                                                "font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.th("Value", style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Number of stars",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td(_safe_int_metric(selected.get("stargazers_count")), style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Number of downloads",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td(_safe_int_metric(selected.get("release_downloads")), style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Number of forks",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td(_safe_int_metric(selected.get("forks_count")), style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Number of issues",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td(_safe_int_metric(selected.get("open_issues_count")), style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Number of contributors",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td(_safe_int_metric(selected.get("contributor_count")), style="text-align: center;"),
-                                    ),
-                                    style="width: 100%; border-collapse: collapse;",
-                                ),
-                            ),
-                            sui.nav_panel(
-                                "Health",
-                                ui.tags.table(
-                                    ui.tags.tr(
-                                        ui.tags.th(
-                                            "Health check",
-                                            style=(
-                                                "padding-right: 6px; text-align: left; "
-                                                "font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.th("Present", style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Description",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("description")) else "✗", style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "README",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("readme")) else "✗", style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Contributing guide",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("contributing")) else "✗", style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Code of conduct",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td("✅" if _truthy_feature_flag(selected.get("code_of_conduct_file")) else "✗", style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Security policy",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("security_policy")) else "✗", style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "Issue templates",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td("✅" if _truthy_feature_flag(selected.get("issue_templates")) else "✗", style="text-align: center;"),
-                                    ),
-                                    ui.tags.tr(
-                                        ui.tags.td(
-                                            "PR template",
-                                            style=(
-                                                "padding-right: 6px; "
-                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
-                                            ),
-                                        ),
-                                        ui.tags.td("✅" if _truthy_feature_flag(selected.get("pull_request_template")) else "✗", style="text-align: center;"),
-                                    ),
-                                    style="width: 100%; border-collapse: collapse;",
-                                ),
-                            ),
-                            sui.nav_panel(
-                                "Security",
-                                (
-                                    ui.p("No security metrics available", class_="text-muted")
-                                    if sec_row is None
-                                    else ui.tags.table(
-                                        ui.tags.tr(
-                                            ui.tags.th(
-                                                "Metric",
-                                                style=(
-                                                    "padding-right: 6px; text-align: left; "
-                                                    "font-weight: bold;"
+                                    style="flex: 1; min-width: 220px;",
+                                ), 
+                            )
+                            @render.data_frame
+                            def display_df():
+                                data = repositories_table_df()
+                                return render.DataGrid(
+                                    data,
+                                    height="500px",
+                                    selection_mode="row",
+                                )
+
+                            @render.download(
+                                filename=lambda: f"repositories_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                            )
+                            def download_repositories_csv():
+                                out_df = repositories_table_df()
+                                buf = io.BytesIO()
+                                out_df.to_csv(buf, index=False, encoding="utf-8")
+                                buf.seek(0)
+                                yield buf.getvalue()
+                        with ui.card():
+                            @render.ui
+                            def show_clicked():
+                                selected_rows = display_df.cell_selection()["rows"]
+
+                                if not selected_rows:
+                                    return ""
+
+                                # Row position in the grid matches repositories_table_df (search + column drops).
+                                view = repositories_table_df()
+                                row_pos = selected_rows[0]
+                                sel = filtered_df().loc[view.index[row_pos]]
+                                selected = sel.iloc[0] if isinstance(sel, pd.DataFrame) else sel
+
+                                _readme_md = _safe_markdown_text(selected.get("readme"))
+                                _contributing_md = _safe_markdown_text(selected.get("contributing"))
+                                _security_policy_md = _safe_markdown_text(selected.get("security_policy"))
+
+                                # Match security metrics row (from security_combined_clean.parquet) by html_url
+                                sec_row = None
+                                if not df_security.empty and "html_url" in df_security.columns:
+                                    _matches = df_security.loc[df_security["html_url"] == selected.get("html_url")]
+                                    if not _matches.empty:
+                                        sec_row = _matches.iloc[0]
+
+                                # Two-column layout:
+                                # - Left column: Overview / Impact / Health / Security
+                                # - Right column: README / Contributing / Security Policy
+                                return sui.layout_columns(
+                                    ui.div(
+                                        sui.navset_tab(
+                                            sui.nav_panel(
+                                                "Overview",
+                                                ui.p(
+                                                    ui.tags.span("Name: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
+                                                    _safe_display_str(selected.get("full_name")),
                                                 ),
-                                            ),
-                                            ui.tags.th("Value", style="text-align: center;"),
-                                        ),
-                                        *[
-                                            ui.tags.tr(
-                                                ui.tags.td(
-                                                    name,
-                                                    style=(
-                                                        "padding-right: 6px; "
-                                                        "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                ui.p(
+                                                    ui.tags.span("University: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
+                                                    _safe_display_str(selected.get("university"), "Unknown"),
+                                                ),
+                                                ui.p(
+                                                    ui.tags.span("License: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
+                                                    _safe_display_str(selected.get("license")),
+                                                ),
+                                                ui.p(
+                                                    ui.tags.span("Language: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
+                                                    _safe_display_str(selected.get("language")),
+                                                ),
+                                                ui.p(
+                                                    ui.tags.span("Project Type: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
+                                                    _safe_display_str(selected.get("type_prediction_gpt_5_mini")),
+                                                ),
+                                                ui.p(
+                                                    ui.tags.span("Description: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
+                                                    _safe_display_str(selected.get("description")),
+                                                ),
+                                                ui.p(
+                                                    ui.tags.span("URL: ", style="color: var(--bs-primary, #0d6efd); font-weight: bold;"),
+                                                    (
+                                                        ui.tags.a(
+                                                            _safe_display_str(selected.get("html_url"), ""),
+                                                            href=_safe_display_str(selected.get("html_url"), ""),
+                                                            target="_blank",
+                                                        )
+                                                        if _has_nonempty_text(selected.get("html_url"))
+                                                        else "—"
                                                     ),
                                                 ),
-                                                ui.tags.td(_safe_display_str(sec_row.get(col)), style="text-align: center;"),
-                                            )
-                                            for name, col in [
-                                                ("Binary artifacts", "Binary_Artifacts"),
-                                                ("Branch protection", "Branch_Protection"),
-                                                ("CI tests", "CI_Tests"),
-                                                ("CII Best Practices", "CII_Best_Practices"),
-                                                ("Code review", "Code_Review"),
-                                                ("Contributors", "Contributors"),
-                                                ("Dangerous workflow", "Dangerous_Workflow"),
-                                                ("Dependency update tool", "Dependency_Update_Tool"),
-                                                ("Fuzzing", "Fuzzing"),
-                                                ("License", "License"),
-                                                ("Maintained", "Maintained"),
-                                                ("Packaging", "Packaging"),
-                                                ("Pinned dependencies", "Pinned_Dependencies"),
-                                                ("SAST", "SAST"),
-                                                ("Security policy", "Security_Policy"),
-                                                ("Signed releases", "Signed_Releases"),
-                                                ("Token permissions", "Token_Permissions"),
-                                                ("Vulnerabilities", "Vulnerabilities"),
-                                                ("Total score", "Total_Score"),
-                                            ]
+                                            ),
+                                            sui.nav_panel(
+                                                "Impact",
+                                                ui.tags.table(
+                                                    ui.tags.tr(
+                                                        ui.tags.th(
+                                                            "Metric",
+                                                            style=(
+                                                                "padding-right: 6px; text-align: left; "
+                                                                "font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.th("Value", style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Number of stars",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td(_safe_int_metric(selected.get("stargazers_count")), style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Number of downloads",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td(_safe_int_metric(selected.get("release_downloads")), style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Number of forks",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td(_safe_int_metric(selected.get("forks_count")), style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Number of issues",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td(_safe_int_metric(selected.get("open_issues_count")), style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Number of contributors",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td(_safe_int_metric(selected.get("contributor_count")), style="text-align: center;"),
+                                                    ),
+                                                    style="width: 100%; border-collapse: collapse;",
+                                                ),
+                                            ),
+                                            sui.nav_panel(
+                                                "Health",
+                                                ui.tags.table(
+                                                    ui.tags.tr(
+                                                        ui.tags.th(
+                                                            "Health check",
+                                                            style=(
+                                                                "padding-right: 6px; text-align: left; "
+                                                                "font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.th("Present", style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Description",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("description")) else "✗", style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "README",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("readme")) else "✗", style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Contributing guide",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("contributing")) else "✗", style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Code of conduct",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td("✅" if _truthy_feature_flag(selected.get("code_of_conduct_file")) else "✗", style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Security policy",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td("✅" if _has_nonempty_text(selected.get("security_policy")) else "✗", style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "Issue templates",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td("✅" if _truthy_feature_flag(selected.get("issue_templates")) else "✗", style="text-align: center;"),
+                                                    ),
+                                                    ui.tags.tr(
+                                                        ui.tags.td(
+                                                            "PR template",
+                                                            style=(
+                                                                "padding-right: 6px; "
+                                                                "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                            ),
+                                                        ),
+                                                        ui.tags.td("✅" if _truthy_feature_flag(selected.get("pull_request_template")) else "✗", style="text-align: center;"),
+                                                    ),
+                                                    style="width: 100%; border-collapse: collapse;",
+                                                ),
+                                            ),
+                                            sui.nav_panel(
+                                                "Security",
+                                                (
+                                                    ui.p("No security metrics available", class_="text-muted")
+                                                    if sec_row is None
+                                                    else ui.tags.table(
+                                                        ui.tags.tr(
+                                                            ui.tags.th(
+                                                                "Metric",
+                                                                style=(
+                                                                    "padding-right: 6px; text-align: left; "
+                                                                    "font-weight: bold;"
+                                                                ),
+                                                            ),
+                                                            ui.tags.th("Value", style="text-align: center;"),
+                                                        ),
+                                                        *[
+                                                            ui.tags.tr(
+                                                                ui.tags.td(
+                                                                    name,
+                                                                    style=(
+                                                                        "padding-right: 6px; "
+                                                                        "color: var(--bs-primary, #0d6efd); font-weight: bold;"
+                                                                    ),
+                                                                ),
+                                                                ui.tags.td(_safe_display_str(sec_row.get(col)), style="text-align: center;"),
+                                                            )
+                                                            for name, col in [
+                                                                ("Binary artifacts", "Binary_Artifacts"),
+                                                                ("Branch protection", "Branch_Protection"),
+                                                                ("CI tests", "CI_Tests"),
+                                                                ("CII Best Practices", "CII_Best_Practices"),
+                                                                ("Code review", "Code_Review"),
+                                                                ("Contributors", "Contributors"),
+                                                                ("Dangerous workflow", "Dangerous_Workflow"),
+                                                                ("Dependency update tool", "Dependency_Update_Tool"),
+                                                                ("Fuzzing", "Fuzzing"),
+                                                                ("License", "License"),
+                                                                ("Maintained", "Maintained"),
+                                                                ("Packaging", "Packaging"),
+                                                                ("Pinned dependencies", "Pinned_Dependencies"),
+                                                                ("SAST", "SAST"),
+                                                                ("Security policy", "Security_Policy"),
+                                                                ("Signed releases", "Signed_Releases"),
+                                                                ("Token permissions", "Token_Permissions"),
+                                                                ("Vulnerabilities", "Vulnerabilities"),
+                                                                ("Total score", "Total_Score"),
+                                                            ]
+                                                        ],
+                                                        style="width: 100%; border-collapse: collapse;",
+                                                    )
+                                                ),
+                                            ),
+                                            id="repo_detail_top",
+                                        ),
+                                        style="border-right: 1px solid #ddd; padding-right: 16px;",
+                                    ),
+                                    ui.div(
+                                        sui.navset_tab(
+                                            sui.nav_panel(
+                                                "README",
+                                                ui.markdown(_readme_md)
+                                                if _readme_md
+                                                else ui.p("No README available", class_="text-muted"),
+                                            ),
+                                            sui.nav_panel(
+                                                "Contributing",
+                                                ui.markdown(_contributing_md)
+                                                if _contributing_md
+                                                else ui.p("No contributing guide available", class_="text-muted"),
+                                            ),
+                                            sui.nav_panel(
+                                                "Security Policy",
+                                                ui.markdown(_security_policy_md)
+                                                if _security_policy_md
+                                                else ui.p("No security policy available", class_="text-muted"),
+                                            ),
+                                            id="repo_detail_bottom",
+                                        ),
+                                        style="padding-left: 16px;",
+                                    ),
+                                    col_widths=(4, 6),
+                                )
+
+                                # ---- Impact ----
+                with ui.nav_panel("Impact"):
+                        # Table + value boxes (2x2)
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.card(fill=True):
+                                ui.markdown("**Impact Indicators per University**")
+                                @render.data_frame
+                                def impact_leaderboard_table():
+                                    data = filtered_df()
+                                    _cols = [
+                                        "University",
+                                        "Total\nstars",
+                                        "Total\nforks",
+                                        "Total\ndownloads",
+                                        "Total\ncontributors",
+                                    ]
+                                    if data.empty:
+                                        return render.DataGrid(pd.DataFrame(columns=_cols))
+
+                                    work = data.copy()
+                                    if "university" in work.columns:
+                                        work["_uni"] = work["university"].fillna("Unknown").astype(str)
+                                    else:
+                                        work["_uni"] = "Unknown"
+
+                                    rows = []
+                                    for uni, grp in work.groupby("_uni", dropna=False):
+                                        stars = (
+                                            pd.to_numeric(grp["stargazers_count"], errors="coerce")
+                                            if "stargazers_count" in grp.columns
+                                            else pd.Series(dtype=float)
+                                        ).sum()
+                                        forks = (
+                                            pd.to_numeric(grp["forks_count"], errors="coerce")
+                                            if "forks_count" in grp.columns
+                                            else pd.Series(dtype=float)
+                                        ).sum()
+                                        downloads = (
+                                            pd.to_numeric(grp["release_downloads"], errors="coerce")
+                                            if "release_downloads" in grp.columns
+                                            else pd.Series(dtype=float)
+                                        ).sum()
+                                        contributors = (
+                                            pd.to_numeric(grp["contributor_count"], errors="coerce")
+                                            if "contributor_count" in grp.columns
+                                            else pd.Series(dtype=float)
+                                        ).sum()
+                                        rows.append((uni, stars, forks, downloads, contributors))
+
+                                    out = pd.DataFrame(
+                                        rows,
+                                        columns=[
+                                            "University",
+                                            "Total\nstars",
+                                            "Total\nforks",
+                                            "Total\ndownloads",
+                                            "Total\ncontributors",
                                         ],
-                                        style="width: 100%; border-collapse: collapse;",
                                     )
-                                ),
-                            ),
-                            id="repo_detail_top",
-                        ),
-                        style="border-right: 1px solid #ddd; padding-right: 16px;",
-                    ),
-                    ui.div(
-                        sui.navset_tab(
-                            sui.nav_panel(
-                                "README",
-                                ui.markdown(_readme_md)
-                                if _readme_md
-                                else ui.p("No README available", class_="text-muted"),
-                            ),
-                            sui.nav_panel(
-                                "Contributing",
-                                ui.markdown(_contributing_md)
-                                if _contributing_md
-                                else ui.p("No contributing guide available", class_="text-muted"),
-                            ),
-                            sui.nav_panel(
-                                "Security Policy",
-                                ui.markdown(_security_policy_md)
-                                if _security_policy_md
-                                else ui.p("No security policy available", class_="text-muted"),
-                            ),
-                            id="repo_detail_bottom",
-                        ),
-                        style="padding-left: 16px;",
-                    ),
-                    col_widths=(4, 6),
-                )
+                                    for c in ("Total\nstars", "Total\nforks", "Total\ndownloads", "Total\ncontributors"):
+                                        out[c] = out[c].fillna(0).map(_format_thousands_approx)
+                                    out = out.sort_values("Total\nstars", ascending=False)
 
-    # ------------------------------------ Impact (bucket distributions) ------------------------------
-    with ui.nav_panel("Impact"):
-        with ui.layout_columns(col_widths=(3, 3, 3, 3)):
-            with ui.value_box(showcase=ICONS["stars"]):
-                "Total stars"
-                @render.express #??
-                def impact_total_stars():
-                    data = filtered_df()
-                    if "stargazers_count" not in data.columns:
-                        "—"
-                    else:
-                        s = pd.to_numeric(data["stargazers_count"], errors="coerce")
-                        int(s.dropna().sum()) if s.notna().any() else 0
+                                    return render.DataGrid(
+                                        out,
+                                        width="100%",
+                                        height="400px",
+                                        styles=[
+                                            {"location": "body", "style": {"fontSize": _TABLE_FONT_SIZE}},
+                                            {"location": "body", "cols": [0], "style": {"minWidth": "32%", "width": "32%"}},
+                                            {"location": "body", "cols": [1], "style": {"minWidth": "17%", "width": "17%", "textAlign": "right"}},
+                                            {"location": "body", "cols": [2], "style": {"minWidth": "17%", "width": "17%", "textAlign": "right"}},
+                                            {"location": "body", "cols": [3], "style": {"minWidth": "17%", "width": "17%", "textAlign": "right"}},
+                                            {"location": "body", "cols": [4], "style": {"minWidth": "17%", "width": "17%", "textAlign": "right"}},
+                                        ],
+                                    )
 
-            with ui.value_box(showcase=ICONS["forks"]):
-                "Total forks"
-                @render.express
-                def impact_total_forks():
-                    data = filtered_df()
-                    if "forks_count" not in data.columns:
-                        "—"
-                    else:
-                        s = pd.to_numeric(data["forks_count"], errors="coerce")
-                        int(s.dropna().sum()) if s.notna().any() else 0
+                            with ui.div():
+                                with ui.layout_columns(col_widths=(6, 6)):
+                                    with ui.value_box(showcase=ICONS["stars"]):
+                                        "Total stars"
+                                        @render.express
+                                        def impact_total_stars():
+                                            data = filtered_df()
+                                            if "stargazers_count" not in data.columns:
+                                                "—"
+                                            else:
+                                                s = pd.to_numeric(data["stargazers_count"], errors="coerce")
+                                                int(s.dropna().sum()) if s.notna().any() else 0
 
-            with ui.value_box(showcase=ICONS["downloads"]):
-                "Total downloads"
-                @render.express
-                def impact_total_downloads():
-                    data = filtered_df()
-                    if "release_downloads" not in data.columns:
-                        "—"
-                    else:
-                        s = pd.to_numeric(data["release_downloads"], errors="coerce")
-                        int(s.dropna().sum()) if s.notna().any() else 0
+                                    with ui.value_box(showcase=ICONS["forks"]):
+                                        "Total forks"
+                                        @render.express
+                                        def impact_total_forks():
+                                            data = filtered_df()
+                                            if "forks_count" not in data.columns:
+                                                "—"
+                                            else:
+                                                s = pd.to_numeric(data["forks_count"], errors="coerce")
+                                                int(s.dropna().sum()) if s.notna().any() else 0
 
-            with ui.value_box(showcase=ICONS["contributors"]):
-                "Total contributors"
-                @render.express
-                def impact_total_contributors():
-                    data = filtered_df()
-                    if "contributor_count" not in data.columns:
-                        "—"
-                    else:
-                        s = pd.to_numeric(data["contributor_count"], errors="coerce")
-                        int(s.dropna().sum()) if s.notna().any() else 0
+                                with ui.layout_columns(col_widths=(6, 6)):
+                                    with ui.value_box(showcase=ICONS["downloads"]):
+                                        "Total downloads"
+                                        @render.express
+                                        def impact_total_downloads():
+                                            data = filtered_df()
+                                            if "release_downloads" not in data.columns:
+                                                "—"
+                                            else:
+                                                s = pd.to_numeric(data["release_downloads"], errors="coerce")
+                                                int(s.dropna().sum()) if s.notna().any() else 0
 
-        with ui.layout_columns(col_widths=(5, 7)):
-            with ui.card():
-                ui.markdown(
-                    "**Impact Indicators per University**"
-                )
-                @render.data_frame
-                def impact_leaderboard_table():
-                    data = filtered_df()
-                    _cols = [
-                        "University",
-                        "Total stars",
-                        "Total forks",
-                        "Total downloads",
-                        "Total contributors",
-                    ]
-                    if data.empty:
-                        return render.DataGrid(pd.DataFrame(columns=_cols))
+                                    with ui.value_box(showcase=ICONS["contributors"]):
+                                        "Total contributors"
+                                        @render.express
+                                        def impact_total_contributors():
+                                            data = filtered_df()
+                                            if "contributor_count" not in data.columns:
+                                                "—"
+                                            else:
+                                                s = pd.to_numeric(data["contributor_count"], errors="coerce")
+                                                int(s.dropna().sum()) if s.notna().any() else 0
 
-                    work = data.copy()
-                    if "university" in work.columns:
-                        work["_uni"] = work["university"].fillna("Unknown").astype(str)
-                    else:
-                        work["_uni"] = "Unknown"
+                        # Distribution plots — 2 per row
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.card():
+                                @render_altair
+                                def plot_impact_stars():
+                                    return plot_stars_distribution_bar_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                    )
 
-                    rows = []
-                    #groupby(...).agg('sum')
-                    for uni, grp in work.groupby("_uni", dropna=False):
-                        stars = (
-                            pd.to_numeric(grp["stargazers_count"], errors="coerce")
-                            if "stargazers_count" in grp.columns
-                            else pd.Series(dtype=float)
-                        ).sum()
-                        forks = (
-                            pd.to_numeric(grp["forks_count"], errors="coerce")
-                            if "forks_count" in grp.columns
-                            else pd.Series(dtype=float)
-                        ).sum()
-                        downloads = (
-                            pd.to_numeric(grp["release_downloads"], errors="coerce")
-                            if "release_downloads" in grp.columns
-                            else pd.Series(dtype=float)
-                        ).sum()
-                        contributors = (
-                            pd.to_numeric(grp["contributor_count"], errors="coerce")
-                            if "contributor_count" in grp.columns
-                            else pd.Series(dtype=float)
-                        ).sum()
-                        rows.append((uni, stars, forks, downloads, contributors))
+                            with ui.card():
+                                @render_altair
+                                def plot_impact_forks():
+                                    return plot_forks_distribution_bar_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                    )
 
-                    out = pd.DataFrame(
-                        rows,
-                        columns=[
-                            "University",
-                            "Total stars",
-                            "Total forks",
-                            "Total downloads",
-                            "Total contributors",
-                        ],
-                    )
-                    out["Total stars"] = out["Total stars"].fillna(0)
-                    out["Total forks"] = out["Total forks"].fillna(0)
-                    out["Total downloads"] = out["Total downloads"].fillna(0)
-                    out["Total contributors"] = out["Total contributors"].fillna(0)
-                    out = out.sort_values("Total stars", ascending=False)
-                    for c in (
-                        "Total stars",
-                        "Total forks",
-                        "Total downloads",
-                        "Total contributors",
-                    ):
-                        out[c] = out[c].map(_format_thousands_approx)
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.card():
+                                @render_altair
+                                def plot_impact_downloads():
+                                    return plot_release_downloads_distribution_bar_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                    )
 
-                    return render.DataGrid(
-                        out,
-                        width="100%",
-                        styles=[
-                            {
-                                "location": "body",
-                                "style": {"fontSize": "12px"},
-                            },
-                            {
-                                "location": "body",
-                                "cols": [0],
-                                "style": {"minWidth": "32%", "width": "32%"},
-                            },
-                            {
-                                "location": "body",
-                                "cols": [1],
-                                "style": {
-                                    "minWidth": "17%",
-                                    "width": "17%",
-                                    "textAlign": "right",
-                                },
-                            },
-                            {
-                                "location": "body",
-                                "cols": [2],
-                                "style": {
-                                    "minWidth": "17%",
-                                    "width": "17%",
-                                    "textAlign": "right",
-                                },
-                            },
-                            {
-                                "location": "body",
-                                "cols": [3],
-                                "style": {
-                                    "minWidth": "17%",
-                                    "width": "17%",
-                                    "textAlign": "right",
-                                },
-                            },
-                            {
-                                "location": "body",
-                                "cols": [4],
-                                "style": {
-                                    "minWidth": "17%",
-                                    "width": "17%",
-                                    "textAlign": "right",
-                                },
-                            },
-                        ],
-                    )
+                            with ui.card():
+                                @render_altair
+                                def plot_impact_contributors():
+                                    return plot_contributors_distribution_bar_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                    )
 
-            with ui.div():
-                with ui.layout_columns():
-                    with ui.card():
-                        @render_altair
-                        def plot_impact_stars():
-                            return plot_stars_distribution_bar_altair(
-                                filtered_df(),
-                                acronym="",
-                                label_size=_OVERVIEW_LABEL_SIZE,
-                                title_size=_OVERVIEW_TITLE_SIZE,
-                                textprops=_OVERVIEW_BAR_PCT_SIZE,
-                            )
+                                # ---- Sustainability ----
+                with ui.nav_panel("Sustainability"):
+                        # Row 1: wider table + 2 stacked value boxes
+                        with ui.layout_columns(col_widths=(9, 3)):
+                            with ui.card():
+                                ui.markdown("**Sustainability indicators per University**")
+                                @render.data_frame
+                                def sustainability_leaderboard_table():
+                                    data = filtered_df()
+                                    _cols = [
+                                        "University",
+                                        "Average\n# Contributors",
+                                        "Average\nbus factor",
+                                    ]
+                                    if data.empty:
+                                        return render.DataGrid(pd.DataFrame(columns=_cols))
 
-                    with ui.card():
-                        @render_altair
-                        def plot_impact_forks():
-                            return plot_forks_distribution_bar_altair(
-                                filtered_df(),
-                                acronym="",
-                                label_size=_OVERVIEW_LABEL_SIZE,
-                                title_size=_OVERVIEW_TITLE_SIZE,
-                                textprops=_OVERVIEW_BAR_PCT_SIZE,
-                            )
+                                    work = data.copy()
+                                    if "university" in work.columns:
+                                        work["_uni"] = work["university"].fillna("Unknown").astype(str)
+                                    else:
+                                        work["_uni"] = "Unknown"
 
-                with ui.layout_columns():
-                    with ui.card():
-                        @render_altair
-                        def plot_impact_downloads():
-                            return plot_release_downloads_distribution_bar_altair(
-                                filtered_df(),
-                                acronym="",
-                                label_size=_OVERVIEW_LABEL_SIZE,
-                                title_size=_OVERVIEW_TITLE_SIZE,
-                                textprops=_OVERVIEW_BAR_PCT_SIZE,
-                            )
+                                    rows = []
+                                    for uni, grp in work.groupby("_uni", dropna=False):
+                                        cc = (
+                                            pd.to_numeric(grp["contributor_count"], errors="coerce")
+                                            if "contributor_count" in grp.columns
+                                            else pd.Series(dtype=float)
+                                        )
+                                        bf = (
+                                            pd.to_numeric(grp["bus_factor"], errors="coerce")
+                                            if "bus_factor" in grp.columns
+                                            else pd.Series(dtype=float)
+                                        )
+                                        avg_c = cc.mean() if cc.notna().any() else float("nan")
+                                        avg_b = bf.mean() if bf.notna().any() else float("nan")
+                                        rows.append((uni, avg_c, avg_b))
 
-                    with ui.card():
-                        @render_altair
-                        def plot_impact_contributors():
-                            return plot_contributors_distribution_bar_altair(
-                                filtered_df(),
-                                acronym="",
-                                label_size=_OVERVIEW_LABEL_SIZE,
-                                title_size=_OVERVIEW_TITLE_SIZE,
-                                textprops=_OVERVIEW_BAR_PCT_SIZE,
-                            )
+                                    out = pd.DataFrame(
+                                        rows,
+                                        columns=["University", "_avg_contrib", "_avg_bus"],
+                                    )
+                                    out = out.sort_values("_avg_contrib", ascending=False, na_position="last")
+                                    out["Average\n# Contributors"] = out["_avg_contrib"].map(
+                                        lambda x: f"{x:.2f}" if pd.notna(x) else "—"
+                                    )
+                                    out["Average\nbus factor"] = out["_avg_bus"].map(
+                                        lambda x: f"{x:.2f}" if pd.notna(x) else "—"
+                                    )
+                                    out = out[["University", "Average\n# Contributors", "Average\nbus factor"]]
 
-    # ------------------------------------ Sustainability ----------------------------------------------
-    with ui.nav_panel("Sustainability"):
-        with ui.layout_columns(col_widths=(4, 8)):
-            with ui.card():
-                ui.markdown(
-                    "**Sustainability indicators per University**"
-                )
-                @render.data_frame
-                def sustainability_leaderboard_table():
-                    data = filtered_df()
-                    _cols = [
-                        "University",
-                        "Average # Contributors",
-                        "Average bus factor",
-                    ]
-                    if data.empty:
-                        return render.DataGrid(pd.DataFrame(columns=_cols))
+                                    return render.DataGrid(
+                                        out,
+                                        width="100%",
+                                        height="320px",
+                                        styles=[
+                                            {"location": "body", "style": {"fontSize": _TABLE_FONT_SIZE}},
+                                            {"location": "body", "cols": [0], "style": {"minWidth": "40%", "width": "40%"}},
+                                            {"location": "body", "cols": [1], "style": {"minWidth": "30%", "width": "30%", "textAlign": "right"}},
+                                            {"location": "body", "cols": [2], "style": {"minWidth": "30%", "width": "30%", "textAlign": "right"}},
+                                        ],
+                                    )
 
-                    work = data.copy()
-                    if "university" in work.columns:
-                        work["_uni"] = work["university"].fillna("Unknown").astype(str)
-                    else:
-                        work["_uni"] = "Unknown"
+                            with ui.div():
+                                with ui.value_box(showcase=ICONS["busfactor"]):
+                                    "Average bus factor"
+                                    @render.express
+                                    def sustainability_value_avg_bus_factor():
+                                        data = filtered_df()
+                                        col = "bus_factor"
+                                        if col not in data.columns:
+                                            "—"
+                                        else:
+                                            v = pd.to_numeric(data[col], errors="coerce").mean()
+                                            f"{v:.2f}" if not pd.isna(v) else "—"
 
-                    rows = []
-                    for uni, grp in work.groupby("_uni", dropna=False):
-                        cc = (
-                            pd.to_numeric(grp["contributor_count"], errors="coerce")
-                            if "contributor_count" in grp.columns
-                            else pd.Series(dtype=float)
-                        )
-                        bf = (
-                            pd.to_numeric(grp["bus_factor"], errors="coerce")
-                            if "bus_factor" in grp.columns
-                            else pd.Series(dtype=float)
-                        )
-                        avg_c = cc.mean() if cc.notna().any() else float("nan")
-                        avg_b = bf.mean() if bf.notna().any() else float("nan")
-                        rows.append((uni, avg_c, avg_b))
+                                with ui.value_box(showcase=ICONS["contributors"]):
+                                    "Average # contributors"
+                                    @render.express
+                                    def sustainability_value_avg_contributors():
+                                        data = filtered_df()
+                                        if "contributor_count" not in data.columns:
+                                            "—"
+                                        else:
+                                            v = pd.to_numeric(
+                                                data["contributor_count"], errors="coerce"
+                                            ).mean()
+                                            f"{v:.2f}" if not pd.isna(v) else "—"
 
-                    out = pd.DataFrame(
-                        rows,
-                        columns=["University", "_avg_contrib", "_avg_bus"],
-                    )
-                    out = out.sort_values(
-                        "_avg_contrib", ascending=False, na_position="last"
-                    )
-                    out["Average # Contributors"] = out["_avg_contrib"].map(
-                        lambda x: f"{x:.2f}" if pd.notna(x) else "—"
-                    )
-                    out["Average bus factor"] = out["_avg_bus"].map(
-                        lambda x: f"{x:.2f}" if pd.notna(x) else "—"
-                    )
-                    out = out[
-                        ["University", "Average # Contributors", "Average bus factor"]
-                    ]
+                        # Plots — 2 per row
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.card():
+                                @render_altair
+                                def plot_files():
+                                    return plot_feature_counts_per_type_altair(
+                                        filtered_df(),
+                                        FEATURES,
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                    )
 
-                    return render.DataGrid(
-                        out,
-                        width="100%",
-                        styles=[
-                            {
-                                "location": "body",
-                                "style": {"fontSize": "12px"},
-                            },
-                            {
-                                "location": "body",
-                                "cols": [0],
-                                "style": {"minWidth": "40%", "width": "40%"},
-                            },
-                            {
-                                "location": "body",
-                                "cols": [1],
-                                "style": {
-                                    "minWidth": "30%",
-                                    "width": "30%",
-                                    "textAlign": "right",
-                                },
-                            },
-                            {
-                                "location": "body",
-                                "cols": [2],
-                                "style": {
-                                    "minWidth": "30%",
-                                    "width": "30%",
-                                    "textAlign": "right",
-                                },
-                            },
-                        ],
-                    )
+                            with ui.card():
+                                @render_altair
+                                def plot_heatmap():
+                                    return plot_feature_heatmap_by_star_bucket_altair(
+                                        filtered_df(),
+                                        FEATURES,
+                                        star_col="stargazers_count",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        annotations_size=_OVERVIEW_BAR_PCT_SIZE,
+                                    )
 
-            with ui.div():
-                with ui.layout_columns(col_widths=(6, 6)):
-                    with ui.value_box(showcase=ICONS["busfactor"]):
-                        "Average bus factor"
-                        @render.express
-                        def sustainability_value_avg_bus_factor():
-                            data = filtered_df()
-                            col = "bus_factor"
-                            if col not in data.columns:
-                                "—"
-                            else:
-                                v = pd.to_numeric(data[col], errors="coerce").mean()
-                                f"{v:.2f}" if not pd.isna(v) else "—"
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.card():
+                                @render_altair
+                                def plot_bus_factor_distribution():
+                                    return plot_bus_factor_distribution_bar_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                    )
 
-                    with ui.value_box(showcase=ICONS["contributors"]):
-                        "Average # contributors"
-                        @render.express
-                        def sustainability_value_avg_contributors():
-                            data = filtered_df()
-                            if "contributor_count" not in data.columns:
-                                "—"
-                            else:
-                                v = pd.to_numeric(
-                                    data["contributor_count"], errors="coerce"
-                                ).mean()
-                                f"{v:.2f}" if not pd.isna(v) else "—"
+                            with ui.card():
+                                @render_altair
+                                def plot_contributor_count_buckets():
+                                    return plot_contributor_count_bucket_bar_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                    )
 
-                with ui.layout_columns():
-                    with ui.card():
-                        @render_altair
-                        def plot_files():
-                            return plot_feature_counts_per_type_altair(
-                                filtered_df(),
-                                FEATURES,
-                                acronym="",
-                                label_size=_OVERVIEW_LABEL_SIZE,
-                                title_size=_OVERVIEW_TITLE_SIZE,
-                                textprops=_OVERVIEW_BAR_PCT_SIZE,
-                            )
+                                # ---- Security ----
+                with ui.nav_panel("Security"):
+                        with ui.layout_columns(col_widths=(8, 4)):
+                            with ui.card():
+                                ui.markdown(
+                                    "**Security scorecard by repository** ([OpenSSF Scorecard](https://scorecard.dev/))"
+                                )
+                                @render.data_frame
+                                def security_scorecard_table():
+                                    out = security_repositories_table_df()
+                                    if out.empty:
+                                        return render.DataGrid(out)
+                                    return render.DataGrid(
+                                        out,
+                                        width="100%",
+                                        height="650px",
+                                        styles=[
+                                            {
+                                                "location": "body",
+                                                "style": {"fontSize": "12px"},
+                                            },
+                                        ],
+                                    )
 
-                    with ui.card():
-                        @render_altair
-                        def plot_heatmap():
-                            return plot_feature_heatmap_by_star_bucket_altair(
-                                filtered_df(),
-                                FEATURES,
-                                star_col="stargazers_count",
-                                label_size=_OVERVIEW_LABEL_SIZE,
-                                title_size=_OVERVIEW_TITLE_SIZE,
-                                annotations_size=_OVERVIEW_BAR_PCT_SIZE,
-                            )
+                            with ui.card():
+                                ui.markdown(
+                                    "**Average score per Security Metric**"
+                                )
+                                @render_altair
+                                def security_metric_averages_heatmap():
+                                    df_avg = security_metric_averages_df()
 
-                with ui.layout_columns():
-                    with ui.card():
-                        @render_altair
-                        def plot_bus_factor_distribution():
-                            return plot_bus_factor_distribution_bar_altair(
-                                filtered_df(),
-                                acronym="",
-                                label_size=_OVERVIEW_LABEL_SIZE,
-                                title_size=_OVERVIEW_TITLE_SIZE,
-                                textprops=_OVERVIEW_BAR_PCT_SIZE,
-                            )
+                                    if df_avg.empty or df_avg["Average"].notna().sum() == 0:
+                                        return (
+                                            alt.Chart(pd.DataFrame({"Metric": [], "x": [], "Average": []}))
+                                            .mark_rect()
+                                            .properties(title="Metric averages")
+                                        )
 
-                    with ui.card():
-                        @render_altair
-                        def plot_contributor_count_buckets():
-                            return plot_contributor_count_bucket_bar_altair(
-                                filtered_df(),
-                                acronym="",
-                                label_size=_OVERVIEW_LABEL_SIZE,
-                                title_size=_OVERVIEW_TITLE_SIZE,
-                                textprops=_OVERVIEW_BAR_PCT_SIZE,
-                            )
+                                    df_avg = df_avg.copy()
+                                    df_avg["Label"] = df_avg["Average"].apply(
+                                        lambda v: f"{v:.2f}" if pd.notna(v) else ""
+                                    )
+                                    df_avg["x"] = "Average"
+                                    metric_order = df_avg["Metric"].tolist()
 
-    # ------------------------------------ Security (scorecard table) --------------------------------
-    with ui.nav_panel("Security"):
-        with ui.layout_columns(col_widths=(8, 4)):
-            with ui.card():
-                ui.markdown(
-                    "**Security scorecard by repository** ([OpenSSF Scorecard](https://scorecard.dev/))"
-                )
-                @render.data_frame
-                def security_scorecard_table():
-                    out = security_repositories_table_df()
-                    if out.empty:
-                        return render.DataGrid(out)
-                    return render.DataGrid(
-                        out,
-                        width="100%",
-                        height="650px",
-                        styles=[
-                            {
-                                "location": "body",
-                                "style": {"fontSize": "12px"},
-                            },
-                        ],
-                    )
+                                    # Exclude spacer row (Metric=" ") from rendering
+                                    plot_df = df_avg[df_avg["Metric"].str.strip() != ""].copy()
 
-            with ui.card():
-                ui.markdown(
-                    "**Average score per Security Metric**"
-                )
-                @render_altair
-                def security_metric_averages_heatmap():
-                    df_avg = security_metric_averages_df()
+                                    rects = (
+                                        alt.Chart(plot_df)
+                                        .mark_rect(stroke="white", strokeWidth=0.6)
+                                        .encode(
+                                            x=alt.X(
+                                                "x:N",
+                                                title="",
+                                                axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE),
+                                            ),
+                                            y=alt.Y(
+                                                "Metric:N",
+                                                sort=metric_order,
+                                                title="",
+                                                axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE),
+                                            ),
+                                            color=alt.Color(
+                                                "Average:Q",
+                                                scale=alt.Scale(scheme="redyellowgreen", domain=[0, 10]),
+                                                legend=None,
+                                            ),
+                                            tooltip=[
+                                                alt.Tooltip("Metric:N"),
+                                                alt.Tooltip("Average:Q", title="Average", format=".2f"),
+                                            ],
+                                        )
+                                    )
 
-                    if df_avg.empty or df_avg["Average"].notna().sum() == 0:
-                        return (
-                            alt.Chart(pd.DataFrame({"Metric": [], "x": [], "Average": []}))
-                            .mark_rect()
-                            .properties(title="Metric averages")
-                        )
+                                    texts = (
+                                        alt.Chart(plot_df)
+                                        .mark_text(fontSize=_OVERVIEW_LABEL_SIZE, color="black")
+                                        .encode(
+                                            x=alt.X("x:N"),
+                                            y=alt.Y("Metric:N", sort=metric_order),
+                                            text="Label:N",
+                                        )
+                                    )
 
-                    df_avg = df_avg.copy()
-                    df_avg["Label"] = df_avg["Average"].apply(
-                        lambda v: f"{v:.2f}" if pd.notna(v) else ""
-                    )
-                    df_avg["x"] = "Average"
-                    metric_order = df_avg["Metric"].tolist()
+                                    return (
+                                        (rects + texts)
+                                        .properties(
+                                            width=alt.Step(120),
+                                            height=alt.Step(28),
+                                            title="Metric averages",
+                                        )
+                                        .configure_title(fontSize=_OVERVIEW_TITLE_SIZE, anchor="middle")
+                                        .configure_axis(titleFontSize=_OVERVIEW_LABEL_SIZE)
+                                        .configure_view(stroke=None)
+                                    )
 
-                    # Exclude spacer row (Metric=" ") from rendering
-                    plot_df = df_avg[df_avg["Metric"].str.strip() != ""].copy()
+    # ============================= ORGANIZATIONS TAB ==============================================
+    with ui.nav_panel("Organizations"):
+        with ui.layout_sidebar(fillable=True):
+            with ui.sidebar(open="open", bg="#f8f8f8", width="300px"):
+                ui.input_selectize("org_university", "University:", universities, multiple=True)
+                ui.br()
+                ui.input_action_button("reset_org_filters", "Reset Org Filters", class_="btn-danger")
+                ui.HTML("")
 
-                    rects = (
-                        alt.Chart(plot_df)
-                        .mark_rect(stroke="white", strokeWidth=0.6)
-                        .encode(
-                            x=alt.X(
-                                "x:N",
-                                title="",
-                                axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE),
-                            ),
-                            y=alt.Y(
-                                "Metric:N",
-                                sort=metric_order,
-                                title="",
-                                axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE),
-                            ),
-                            color=alt.Color(
-                                "Average:Q",
-                                scale=alt.Scale(scheme="redyellowgreen", domain=[0, 10]),
-                                legend=None,
-                            ),
-                            tooltip=[
-                                alt.Tooltip("Metric:N"),
-                                alt.Tooltip("Average:Q", title="Average", format=".2f"),
-                            ],
-                        )
-                    )
-
-                    texts = (
-                        alt.Chart(plot_df)
-                        .mark_text(fontSize=_OVERVIEW_LABEL_SIZE, color="black")
-                        .encode(
-                            x=alt.X("x:N"),
-                            y=alt.Y("Metric:N", sort=metric_order),
-                            text="Label:N",
-                        )
-                    )
-
-                    return (
-                        (rects + texts)
-                        .properties(
-                            width=alt.Step(120),
-                            height=alt.Step(28),
-                            title="Metric averages",
-                        )
-                        .configure_title(fontSize=_OVERVIEW_TITLE_SIZE, anchor="middle")
-                        .configure_axis(titleFontSize=_OVERVIEW_LABEL_SIZE)
-                        .configure_view(stroke=None)
-                    )
+            with ui.navset_tab(id="org_tab", selected="Overview"):
+                with ui.nav_panel("Overview"):
+                    ui.p("Organizations data coming soon.", class_="text-muted", style="padding: 1rem;")
+                with ui.nav_panel("Browse"):
+                    ui.p("Organizations data coming soon.", class_="text-muted", style="padding: 1rem;")
 
 # ------------------------------------ Filtered DataFrame ----------------------------------------------
 

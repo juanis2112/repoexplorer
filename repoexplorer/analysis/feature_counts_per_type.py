@@ -268,7 +268,7 @@ def plot_feature_counts_per_type_altair(
                 "feature:N",
                 sort=order,
                 title="Community File",
-                axis=alt.Axis(labelAngle=-40, labelFontSize=label_size),
+                axis=alt.Axis(labelAngle=-45, labelFontSize=label_size, labelLimit=200),
             ),
             y=alt.Y(
                 "count:Q",
@@ -280,7 +280,11 @@ def plot_feature_counts_per_type_altair(
                 "project_type:N",
                 scale=color_scale,
                 title="Project Type",
-                legend=alt.Legend(labelFontSize=label_size, titleFontSize=label_size),
+                legend=alt.Legend(
+                    labelFontSize=label_size,
+                    titleFontSize=label_size,
+                    orient="top-left",
+                ),
             ),
             tooltip=[
                 alt.Tooltip("feature:N", title="Feature"),

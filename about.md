@@ -18,9 +18,9 @@ The **current dataset** for this dashboard is scoped to the **universities and i
 
 ### Affiliation and project type (AI-assisted)
 
-Not every match is a clean institutional link. **Large language models** from **OpenAI**—specifically **GPT‑5-mini** were used to estimate how strongly a repository is affiliated with a given university given the repository **README** and **description**; **Contributor** and profile-related signals where available. Additionally, repositories project types were predicted using the same methodology.
+Not every match is a clean institutional link. **Large language models** from **OpenAI**, specifically **GPT‑5-mini** were used to estimate how strongly a repository is affiliated with a given university given the repository **README** and **description**; **Contributor** and profile-related signals where available. Additionally, repositories project types were predicted using the same methodology.
 
-You’ll see these as **affiliation probabilities** and **project type** labels in the app (for example, development tooling vs. other categories). They are **predictions**, not ground truth—use them as guidance alongside the raw metadata.
+You’ll see these as **affiliation probabilities** and **project type** labels in the app (for example, development tooling vs. other categories). They are **predictions**, not ground truth, use them as guidance alongside the raw metadata.
 
 For more information on the data collection and classification, see **[Recipe for Discovery: A Pipeline for Institutional Open Source Activity](https://arxiv.org/abs/2506.18359)** (arXiv preprint).
 
@@ -30,7 +30,7 @@ To keep the dataset focused and the application responsive, the build **excludes
 
 ### Security scores (OpenSSF Scorecard)
 
-**[OpenSSF Scorecard](https://scorecard.dev/)** checks are run against projects to bring in security-related metrics (for example branch protection, CI, signed releases, and an overall score). **Coverage is still incomplete**—only a **subset** of repositories currently has scorecard results. **Filling this in for the full dataset is ongoing work**, and the Security views will become more complete as that pipeline finishes.
+**[OpenSSF Scorecard](https://scorecard.dev/)** checks are run against projects to bring in security-related metrics (for example branch protection, CI, signed releases, and an overall score). **Coverage is still incomplete**, only a **subset** of repositories currently has scorecard results. **Filling this in for the full dataset is ongoing work**, and the Security views will become more complete as that pipeline finishes.
 
 ---
 
@@ -63,9 +63,17 @@ These associations are best-effort signals, not ground truth.
 
 ## **Using the dashboard**
 
+### Main tabs: what you’ll see
+
+The dashboard is organized into two main tabs, **Repositories** and **Organizations**, each with its own sidebar filters and inner sub-tabs.
+
+---
+
+## **Repositories tab**
+
 ### Sidebar: filters
 
-Everything in the main views responds to the **same filter set** (unless noted). On the left you’ll find:
+All views inside the Repositories tab respond to the **same filter set**. On the left you’ll find:
 
 - **Prediction threshold**: Keeps repositories whose **estimated affiliation probability** falls in the range you choose (for example, high-confidence matches only). The default value for this metric is 0.8.
 - **University**: One or more institutions to include.
@@ -76,7 +84,7 @@ Everything in the main views responds to the **same filter set** (unless noted).
 
 Use **Reset all filters** to clear selections and ranges and start over.
 
-### Main tabs: what you’ll see
+### Inner tabs
 
 #### Overview
 
@@ -86,12 +94,12 @@ A **table** of repository counts **per university**; charts for **community file
 
 This tab is a good first stop for “what’s in the box?” after you set filters.
 
-#### Repositories
+#### Browse
 
 A **searchable table** of repositories matching your filters. **Click a row** to open a detail panel:
 
 - **Overview**: name, university, license, language, type, description, and link to GitHub
-- **Impact**: stars, forks, release downloads, issues, and contributors 
+- **Impact**: stars, forks, release downloads, issues, and contributors
 - **Health**: quick checks for description, README, contributing guide, code of conduct, security policy, and issue/PR templates
 - **Security**: OpenSSF Scorecard metrics when available for that repo.
 
@@ -109,10 +117,16 @@ Focuses on **maintainability-style** signals: **average contributors** and **ave
 
 Two complementary views:
 
-1. A **wide table** of repositories with **OpenSSF Scorecard** columns (scores align with **[scorecard.dev](https://scorecard.dev/)**).  
+1. A **wide table** of repositories with **OpenSSF Scorecard** columns (scores align with **[scorecard.dev](https://scorecard.dev/)**).
 2. An **average score per metric** visualization so you can see which security checks tend to score higher or lower across the filtered repositories.
 
 Remember: **many cells may be empty** until scorecard coverage catches up with the full repository list.
+
+---
+
+## **Organizations tab**
+
+Coming soon. This tab will surface data about the GitHub **organizations** affiliated with CURIOSS member institutions, including activity, membership, and repository breakdowns at the organization level.
 
 ---
 
