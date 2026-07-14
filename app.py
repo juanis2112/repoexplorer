@@ -497,6 +497,7 @@ if DATA == "remote":
     # Usage Shiny app
     _df_pl = read_parquet_from_s3_public("repoexplorer-data", "repositories_reduced_combined_stars_gt_0.parquet", columns=COLUMNS_TO_LOAD)
     _df_security_pl = read_parquet_from_s3_public("repoexplorer-data", "security_reduced_combined_stars_gt_0.parquet")
+    _df_organizations_pl = read_parquet_from_s3_public("repoexplorer-data", "organizations.parquet")
 
 else:
     # Load main repositories table
@@ -510,20 +511,22 @@ else:
         except Exception:
             logging.exception("Failed to load security parquet %s", SECURITY_PARQUET)
             _df_security_pl = pl.DataFrame()
+    _df_organizations_pl = pl.DataFrame()
+    if os.path.isfile(ORGANIZATIONS_PARQUET):
+        try:
+            _df_organizations_pl = pl.read_parquet(ORGANIZATIONS_PARQUET)
+        except Exception:
+            logging.exception("Failed to load organizations parquet %s", ORGANIZATIONS_PARQUET)
+            _df_organizations_pl = pl.DataFrame()
 
 _df_pl = optimize_dtypes(_df_pl)
 df = _df_pl.to_pandas()
 df_security = _df_security_pl.to_pandas() if not _df_security_pl.is_empty() else pd.DataFrame()
-
-
-# Load organizations table
-df_organizations = pd.DataFrame()
-if os.path.isfile(ORGANIZATIONS_PARQUET):
-    try:
-        df_organizations = pd.read_parquet(ORGANIZATIONS_PARQUET)
-    except Exception:
-        logging.exception("Failed to load organizations parquet %s", ORGANIZATIONS_PARQUET)
-        df_organizations = pd.DataFrame()
+df_organizations = (
+    _df_organizations_pl.to_pandas()
+    if not _df_organizations_pl.is_empty()
+    else pd.DataFrame()
+)
 
 # # Load contributors table
 # df_contributors = pd.DataFrame()
