@@ -126,7 +126,51 @@ Remember: **many cells may be empty** until scorecard coverage catches up with t
 
 ## **Organizations tab**
 
-Coming soon. This tab will surface data about the GitHub **organizations** affiliated with CURIOSS member institutions, including activity, membership, and repository breakdowns at the organization level.
+This tab surfaces data about the GitHub **organizations** affiliated with CURIOSS member institutions.
+
+### Sidebar: filters
+
+All views inside the Organizations tab respond to the same filter set. On the left you'll find:
+
+**Prediction threshold**: Keeps organizations whose estimated affiliation probability falls in the range you choose. The default range is 0.5 to 1.0, reflecting that organization-level affiliation signals tend to be noisier than repository-level ones.
+
+**University**: One or more institutions to include.
+
+Use **Reset Org Filters** to clear all selections and start over.
+
+### Inner tabs
+
+#### Overview
+
+High-level summary numbers: total organizations in view, along with the share of organizations that have a description, a URL, and an email address on record. Below that, charts show the distribution of organizations per university, the number of organizations created per year, and profile completeness across key fields (description, location, website, email, and company).
+
+#### Browse
+
+A searchable table of organizations matching your filters. Fields shown include login, GitHub URL, name, university, description, company, email, URL, location, creation date, and affiliation score.
+
+### Affiliation scoring for organizations
+
+Each organization receives an **affiliation score** between 0 and 1, estimated using a rule-based system that checks the organization's login, name, description, email, URL, location, and company field against each institution's known domain, website, acronym, and name. The tiers are as follows.
+
+**Score 1.0** is assigned when the organization's email contains the university domain, when the URL or company field contains the university domain or website, or when the description contains the university domain, website URL, or acronym as a whole word.
+
+**Score 0.90** is assigned when the university acronym (three or more characters) appears in the login.
+
+**Score 0.88** is assigned when the acronym appears in the name or company field.
+
+**Score 0.85** is assigned when at least 50% of the significant words in the university name (words longer than three characters) appear in the login.
+
+**Score 0.82** applies the same word-overlap test against the name field.
+
+**Score 0.80** applies the same word-overlap test against the company field.
+
+**Score 0.60** is assigned when the first distinctive word of the university name (longer than four characters) appears anywhere across all fields.
+
+**Score 0.55** is assigned when the university city appears in the location field alongside at least one other weak signal (domain, acronym, or first distinctive word present anywhere).
+
+**Score 0.20** is the base score for organizations that were scraped for a given institution but show no textual confirmation of affiliation.
+
+Checks are applied in the order above and return at the first match, so higher tiers always win. These are estimates, not ground truth, and should be used as guidance alongside the raw metadata.
 
 ---
 

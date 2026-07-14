@@ -79,7 +79,7 @@ PARQUET_BASE = "Data/parquet"
 
 COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_reduced_combined_stars_gt_0.parquet")
 SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_reduced_combined_stars_gt_0.parquet")
-# ORGANIZATIONS_PARQUET = os.path.join(PARQUET_BASE, "organizations_combined_clean.parquet")
+ORGANIZATIONS_PARQUET = "../repofinder/Data/parquet/organizations.parquet"
 # CONTRIBUTORS_PARQUET = os.path.join(PARQUET_BASE, "contributors_combined_clean.parquet")
 # COMMITS_PARQUET = os.path.join(PARQUET_BASE, "commits_combined_clean.parquet")
 
@@ -516,14 +516,14 @@ df = _df_pl.to_pandas()
 df_security = _df_security_pl.to_pandas() if not _df_security_pl.is_empty() else pd.DataFrame()
 
 
-# # Load organizations table
-# df_organizations = pd.DataFrame()
-# if os.path.isfile(ORGANIZATIONS_PARQUET):
-#     try:
-#         df_organizations = pd.read_parquet(ORGANIZATIONS_PARQUET)
-#     except Exception:
-#         logging.exception("Failed to load organizations parquet %s", ORGANIZATIONS_PARQUET)
-#         df_organizations = pd.DataFrame()
+# Load organizations table
+df_organizations = pd.DataFrame()
+if os.path.isfile(ORGANIZATIONS_PARQUET):
+    try:
+        df_organizations = pd.read_parquet(ORGANIZATIONS_PARQUET)
+    except Exception:
+        logging.exception("Failed to load organizations parquet %s", ORGANIZATIONS_PARQUET)
+        df_organizations = pd.DataFrame()
 
 # # Load contributors table
 # df_contributors = pd.DataFrame()
@@ -557,6 +557,9 @@ licenses = df["license"].dropna().unique().tolist() if "license" in df.columns e
 languages = df["language"].unique().tolist() if "language" in df.columns else []
 universities = df["university"].unique().tolist() if "university" in df.columns else []
 types = df["type_prediction_gpt_5_mini"].unique().tolist() if "type_prediction_gpt_5_mini" in df.columns else []
+
+# Organizations filter options
+_org_unis = sorted(df_organizations["university"].dropna().unique().tolist()) if not df_organizations.empty and "university" in df_organizations.columns else []
 
 # Subset with default prediction threshold (>= 0.8) for sliders and for chat
 _df_aff = pd.to_numeric(df["affiliation_prediction_gpt_5_mini"], errors="coerce")
@@ -1593,18 +1596,260 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
     with ui.nav_panel("Organizations"):
         with ui.layout_sidebar(fillable=True):
             with ui.sidebar(open="open", bg="#f8f8f8", width="300px"):
-                ui.input_selectize("org_university", "University:", universities, multiple=True)
+                ui.input_slider(
+                    "slider_org_threshold",
+                    "Prediction Threshold:",
+                    min=0.0, max=1.0,
+                    value=[0.5, 1.0],
+                    step=0.01,
+                )
+                ui.input_selectize("org_university", "University:", _org_unis, multiple=True)
                 ui.br()
                 ui.input_action_button("reset_org_filters", "Reset Org Filters", class_="btn-danger")
                 ui.HTML("")
 
             with ui.navset_tab(id="org_tab", selected="Overview"):
+
+                # ---- Overview ----
                 with ui.nav_panel("Overview"):
-                    ui.p("Organizations data coming soon.", class_="text-muted", style="padding: 1rem;")
+                    with ui.layout_columns(col_widths=(6, 6)):
+                        # Value boxes 2x2
+                        with ui.layout_columns(col_widths=(6, 6)):
+                            with ui.value_box(showcase=ICONS["repos"]):
+                                "Total organizations"
+                                @render.express
+                                def org_value_total():
+                                    f"{len(filtered_org_df()):,}"
+
+                            with ui.value_box(showcase=ICONS["contributors"]):
+                                "With URL"
+                                @render.express
+                                def org_value_url():
+                                    data = filtered_org_df()
+                                    if data.empty or "url" not in data.columns:
+                                        "—"
+                                    else:
+                                        has = data["url"].dropna().astype(str).str.strip()
+                                        has = has[has.str.len() > 0]
+                                        pct = len(has) / len(data) * 100
+                                        f"{pct:.1f}%"
+
+                            with ui.value_box(showcase=ICONS["active"]):
+                                "With description"
+                                @render.express
+                                def org_value_description():
+                                    data = filtered_org_df()
+                                    if data.empty or "description" not in data.columns:
+                                        "—"
+                                    else:
+                                        has = data["description"].dropna().astype(str).str.strip()
+                                        has = has[has.str.len() > 0]
+                                        pct = len(has) / len(data) * 100
+                                        f"{pct:.1f}%"
+
+                            with ui.value_box(showcase=ICONS["contributors"]):
+                                "With email"
+                                @render.express
+                                def org_value_email():
+                                    data = filtered_org_df()
+                                    if data.empty or "email" not in data.columns:
+                                        "—"
+                                    else:
+                                        has = data["email"].dropna().astype(str).str.strip()
+                                        has = has[has.str.len() > 0]
+                                        pct = len(has) / len(data) * 100
+                                        f"{pct:.1f}%"
+
+                        # Organizations per university chart
+                        with ui.card():
+                            ui.markdown("**Organizations per university**")
+                            @render_altair
+                            def org_plot_per_university():
+                                data = filtered_org_df()
+                                if data.empty or "university" not in data.columns:
+                                    return alt.Chart(pd.DataFrame()).mark_bar().properties(width="container", height="container")
+                                counts = (
+                                    data.groupby("university")
+                                    .size()
+                                    .reset_index(name="count")
+                                    .sort_values("count", ascending=False)
+                                    .head(20)
+                                )
+                                return (
+                                    alt.Chart(counts)
+                                    .mark_bar(color="#378ADD")
+                                    .encode(
+                                        x=alt.X("count:Q", title="Organizations", axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE)),
+                                        y=alt.Y("university:N", sort="-x", title=None, axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE)),
+                                        tooltip=[alt.Tooltip("university:N", title="University"), alt.Tooltip("count:Q", title="Count")],
+                                    )
+                                    .properties(width="container", height="container", title="")
+                                    .configure_view(stroke=None)
+                                )
+
+                    with ui.layout_columns(col_widths=(6, 6)):
+                        with ui.card():
+                            ui.markdown("**Organizations created per year**")
+                            @render_altair
+                            def org_plot_created_per_year():
+                                data = filtered_org_df()
+                                if data.empty or "created_at" not in data.columns:
+                                    return alt.Chart(pd.DataFrame()).mark_bar().properties(width="container", height="container")
+                                dates = pd.to_datetime(data["created_at"], errors="coerce")
+                                years = dates.dt.year.dropna().astype(int)
+                                counts = years.value_counts().reset_index()
+                                counts.columns = ["year", "count"]
+                                counts = counts.sort_values("year")
+                                return (
+                                    alt.Chart(counts)
+                                    .mark_bar(color="#185FA5")
+                                    .encode(
+                                        x=alt.X("year:O", title="Year", axis=alt.Axis(labelAngle=-45, labelFontSize=_OVERVIEW_LABEL_SIZE)),
+                                        y=alt.Y("count:Q", title="Organizations", axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE)),
+                                        tooltip=[alt.Tooltip("year:O", title="Year"), alt.Tooltip("count:Q", title="Count")],
+                                    )
+                                    .properties(width="container", height="container", title="")
+                                    .configure_view(stroke=None)
+                                )
+
+                        with ui.card():
+                            ui.markdown("**Profile completeness**")
+                            @render_altair
+                            def org_plot_profile_completeness():
+                                data = filtered_org_df()
+                                if data.empty:
+                                    return alt.Chart(pd.DataFrame()).mark_bar().properties(width="container", height="container")
+                                fields = {
+                                    "Description": "description",
+                                    "Location": "location",
+                                    "Website": "url",
+                                    "Email": "email",
+                                    "Company": "company",
+                                }
+                                rows = []
+                                for label, col in fields.items():
+                                    if col in data.columns:
+                                        filled = data[col].dropna().astype(str).str.strip()
+                                        filled = filled[filled.str.len() > 0]
+                                        pct = round(len(filled) / len(data) * 100, 1)
+                                    else:
+                                        pct = 0.0
+                                    rows.append({"field": label, "pct": pct})
+                                df_plot = pd.DataFrame(rows)
+                                return (
+                                    alt.Chart(df_plot)
+                                    .mark_bar(color="#1D9E75")
+                                    .encode(
+                                        x=alt.X("pct:Q", title="% filled", scale=alt.Scale(domain=[0, 100]), axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE)),
+                                        y=alt.Y("field:N", sort="-x", title=None, axis=alt.Axis(labelFontSize=_OVERVIEW_LABEL_SIZE)),
+                                        tooltip=[alt.Tooltip("field:N", title="Field"), alt.Tooltip("pct:Q", title="% filled")],
+                                    )
+                                    .properties(width="container", height="container", title="")
+                                    .configure_view(stroke=None)
+                                )
+
+                # ---- Browse ----
                 with ui.nav_panel("Browse"):
-                    ui.p("Organizations data coming soon.", class_="text-muted", style="padding: 1rem;")
+                    with ui.card(class_="repo-data-card"):
+                        ui.tags.div(
+                            ui.tags.div(
+                                ui.input_text(
+                                    "org_search",
+                                    "Search",
+                                    placeholder="Search organizations...",
+                                    width="100%",
+                                ),
+                                style="flex: 1; min-width: 220px;",
+                            ),
+                        )
+                        @render.data_frame
+                        def org_browse_table():
+                            data = filtered_org_df().copy()
+                            if data.empty:
+                                return render.DataGrid(pd.DataFrame())
+
+                            search = (input.org_search() or "").strip().lower()
+                            if search:
+                                mask = pd.Series(False, index=data.index)
+                                for col in ["login", "name", "description", "university", "location", "email", "url"]:
+                                    if col in data.columns:
+                                        mask |= data[col].astype(str).str.lower().str.contains(search, na=False)
+                                data = data[mask]
+
+                            col_map = {
+                                "login": "Login",
+                                "name": "Name",
+                                "university": "University",
+                                "description": "Description",
+                                "company": "Company",
+                                "email": "Email",
+                                "url": "URL",
+                                "location": "Location",
+                                "source": "Source",
+                                "created_at": "Created",
+                                "affiliation_prediction_orgs": "Affiliation score",
+                            }
+                            display_cols = [c for c in col_map if c in data.columns]
+                            out = data[display_cols].rename(columns=col_map)
+
+                            if "Created" in out.columns:
+                                out["Created"] = pd.to_datetime(out["Created"], errors="coerce").dt.strftime("%Y-%m")
+                            if "Affiliation score" in out.columns:
+                                out["Affiliation score"] = pd.to_numeric(out["Affiliation score"], errors="coerce").map(
+                                    lambda x: f"{x:.2f}" if pd.notna(x) else "—"
+                                )
+                            if "Login" in out.columns:
+                                out.insert(
+                                    out.columns.get_loc("Login") + 1,
+                                    "GitHub URL",
+                                    out["Login"].apply(
+                                        lambda v: f"https://github.com/{v}" if pd.notna(v) and str(v).strip() else "—"
+                                    ),
+                                )
+
+                            return render.DataGrid(
+                                out,
+                                height="500px",
+                                selection_mode="row",
+                            )
+
+                        @render.download(
+                            filename=lambda: f"organizations_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                        )
+                        def download_orgs_csv():
+                            data = filtered_org_df()
+                            buf = io.BytesIO()
+                            data.to_csv(buf, index=False, encoding="utf-8")
+                            buf.seek(0)
+                            yield buf.getvalue()
+
+
+# Reset org filters
+@reactive.effect
+@reactive.event(input.reset_org_filters)
+def _reset_org_filters():
+    ui.update_selectize("org_university", selected=[])
+    ui.update_slider("slider_org_threshold", value=[0.5, 1.0])
 
 # ------------------------------------ Filtered DataFrame ----------------------------------------------
+
+@reactive.calc
+def filtered_org_df():
+    data = df_organizations.copy()
+    if data.empty:
+        return data
+
+    if input.org_university():
+        data = data[data["university"].isin(input.org_university())]
+
+
+    if "affiliation_prediction_orgs" in data.columns and input.slider_org_threshold():
+        min_val, max_val = input.slider_org_threshold()
+        pred = pd.to_numeric(data["affiliation_prediction_orgs"], errors="coerce")
+        data = data[(pred >= min_val) & (pred <= max_val)]
+
+    return data
+
 
 @reactive.calc
 def filtered_df():
