@@ -27,30 +27,12 @@ from repoexplorer.analysis.feature_counts import plot_feature_counts, plot_featu
 from repoexplorer.analysis.university_distribution import plot_university_distribution
 from repoexplorer.analysis.feature_heatmap_per_stars import plot_feature_heatmap_by_star_bucket, plot_feature_heatmap_by_star_bucket_altair
 from repoexplorer.analysis.commit_history import plot_commit_history
-from repoexplorer.analysis.stars_distribution_bar import (
-    plot_stars_distribution_bar,
-    plot_stars_distribution_bar_altair,
-)
-from repoexplorer.analysis.forks_distribution_bar import (
-    plot_forks_distribution_bar,
-    plot_forks_distribution_bar_altair,
-)
-from repoexplorer.analysis.release_downloads_distribution_bar import (
-    plot_release_downloads_distribution_bar,
-    plot_release_downloads_distribution_bar_altair,
-)
-from repoexplorer.analysis.contributors_distribution_bar import (
-    plot_contributors_distribution_bar,
-    plot_contributors_distribution_bar_altair,
-)
-from repoexplorer.analysis.bus_factor_distribution_bar import (
-    plot_bus_factor_distribution_bar,
-    plot_bus_factor_distribution_bar_altair,
-)
-from repoexplorer.analysis.contributor_count_bucket_bar import (
-    plot_contributor_count_bucket_bar,
-    plot_contributor_count_bucket_bar_altair,
-)
+from repoexplorer.analysis.stars_distribution_bar import plot_stars_distribution_bar_altair
+from repoexplorer.analysis.forks_distribution_bar import plot_forks_distribution_bar_altair
+from repoexplorer.analysis.release_downloads_distribution_bar import plot_release_downloads_distribution_bar_altair
+from repoexplorer.analysis.contributors_distribution_bar import plot_contributors_distribution_bar_altair
+from repoexplorer.analysis.bus_factor_distribution_bar import plot_bus_factor_distribution_bar_altair
+from repoexplorer.analysis.contributor_count_bucket_bar import plot_contributor_count_bucket_bar_altair
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -130,11 +112,11 @@ SECURITY_SCORECARD_METRICS = [
 
 
 def _is_missing_scalar(v):
-    """True for None, NaN, or pandas NA (common for null cells from parquet)."""
+    """True for None or NaN (common null representations from Polars rows)."""
     if v is None:
         return True
     try:
-        return bool(pd.isna(v))
+        return v != v  # NaN != NaN is True for float('nan')
     except Exception:
         return False
 
@@ -169,7 +151,7 @@ def _format_thousands_approx(n) -> str:
         x = float(n)
     except (TypeError, ValueError):
         return "—"
-    if pd.isna(x):
+    if x != x:  # NaN check
         return "—"
     x = int(round(x))
     if x == 0:
@@ -206,19 +188,23 @@ def _truthy_feature_flag(v):
     return s not in ("", "none", "nan", "false", "0", "<na>")
 
 
-def _normalize_license_column(df: pd.DataFrame) -> None:
+def _normalize_license_column(df: pl.DataFrame) -> pl.DataFrame:
     """
-    In-place: missing / empty licenses become pandas NA.
-
-    Remote parquet often stores null licenses as real NaN. Using ``.astype(str)``
-    in metrics turns those into the literal "nan" string, which incorrectly counts
-    as having a license (~100%). Local files may use empty strings instead.
+    Returns a new DataFrame with missing / empty licenses replaced with null.
     """
-    if df is None or df.empty or "license" not in df.columns:
-        return
-    s = df["license"].astype("string").str.strip()
-    no_license = s.isna() | (s.str.lower().isin(["", "none", "nan", "null", "<na>"]))
-    df["license"] = s.mask(no_license, pd.NA)
+    if df is None or df.is_empty() or "license" not in df.columns:
+        return df
+    return df.with_columns(
+        pl.when(
+            pl.col("license").is_null()
+            | pl.col("license").str.strip_chars().str.to_lowercase().is_in(
+                ["", "none", "nan", "null", "<na>"]
+            )
+        )
+        .then(None)
+        .otherwise(pl.col("license").str.strip_chars())
+        .alias("license")
+    )
 
 
 def _make_feature_counts_combined_fig(
@@ -520,13 +506,10 @@ else:
             _df_organizations_pl = pl.DataFrame()
 
 _df_pl = optimize_dtypes(_df_pl)
-df = _df_pl.to_pandas()
-df_security = _df_security_pl.to_pandas() if not _df_security_pl.is_empty() else pd.DataFrame()
-df_organizations = (
-    _df_organizations_pl.to_pandas()
-    if not _df_organizations_pl.is_empty()
-    else pd.DataFrame()
-)
+df = _df_pl
+df_security = _df_security_pl
+df_organizations = _df_organizations_pl
+del _df_pl, _df_security_pl, _df_organizations_pl
 
 # # Load contributors table
 # df_contributors = pd.DataFrame()
@@ -547,7 +530,7 @@ df_organizations = (
 #         df_commits = pd.DataFrame()
 
 
-_normalize_license_column(df)
+df = _normalize_license_column(df)
 
 
 # =============================================== App UI ==========================================
@@ -556,23 +539,26 @@ ui.page_opts(title="Open Source Repository Browser", fillable=True)
 
 # ======================================== Filter options =========================================
 
-licenses = df["license"].dropna().unique().tolist() if "license" in df.columns else []
-languages = df["language"].unique().tolist() if "language" in df.columns else []
-universities = df["university"].unique().tolist() if "university" in df.columns else []
-types = df["type_prediction_gpt_5_mini"].unique().tolist() if "type_prediction_gpt_5_mini" in df.columns else []
+licenses = df["license"].drop_nulls().unique().to_list() if "license" in df.columns else []
+languages = df["language"].drop_nulls().unique().to_list() if "language" in df.columns else []
+universities = df["university"].drop_nulls().unique().to_list() if "university" in df.columns else []
+types = df["type_prediction_gpt_5_mini"].drop_nulls().unique().to_list() if "type_prediction_gpt_5_mini" in df.columns else []
 
 # Organizations filter options
-_org_unis = sorted(df_organizations["university"].dropna().unique().tolist()) if not df_organizations.empty and "university" in df_organizations.columns else []
+_org_unis = (
+    sorted(df_organizations["university"].drop_nulls().unique().to_list())
+    if not df_organizations.is_empty() and "university" in df_organizations.columns
+    else []
+)
 
 # Subset with default prediction threshold (>= 0.8) for sliders and for chat
-_df_aff = pd.to_numeric(df["affiliation_prediction_gpt_5_mini"], errors="coerce")
-_df_08 = df.loc[_df_aff >= 0.8]
-_m = pd.to_numeric(_df_08["stargazers_count"], errors="coerce").max() if not _df_08.empty else None
-_slider_max_stars = int(_m) if _m is not None and not pd.isna(_m) else 5000
-_m = pd.to_numeric(_df_08["forks_count"], errors="coerce").max() if not _df_08.empty else None
-_slider_max_forks = int(_m) if _m is not None and not pd.isna(_m) else 100
-_m = pd.to_numeric(_df_08["release_downloads"], errors="coerce").max() if not _df_08.empty else None
-_slider_max_downloads = int(_m) if _m is not None and not pd.isna(_m) else 1000
+_df_08 = df.filter(pl.col("affiliation_prediction_gpt_5_mini") >= 0.8)
+_m = _df_08["stargazers_count"].max() if not _df_08.is_empty() else None
+_slider_max_stars = int(_m) if _m is not None else 5000
+_m = _df_08["forks_count"].max() if not _df_08.is_empty() else None
+_slider_max_forks = int(_m) if _m is not None else 100
+_m = _df_08["release_downloads"].max() if not _df_08.is_empty() else None
+_slider_max_downloads = int(_m) if _m is not None else 1000
 
 # ------------------------------------ QueryChat Config -------------------------------------------
 if ENABLE_CHAT:
@@ -696,15 +682,14 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 @render.data_frame
                                 def university_table():
                                     data = filtered_df()
-                                    if "university" not in data.columns or data.empty:
-                                        return render.DataGrid(pd.DataFrame(columns=["University", "Count"]))
+                                    if "university" not in data.columns or data.is_empty():
+                                        return render.DataGrid(pl.DataFrame({"University": [], "Count": []}))
 
                                     university_counts = (
-                                        data["university"]
-                                        .value_counts()
-                                        .sort_values(ascending=False)
-                                        .rename_axis("University")
-                                        .reset_index(name="Count")
+                                        data.group_by("university")
+                                        .agg(pl.len().alias("Count"))
+                                        .sort("Count", descending=True)
+                                        .rename({"university": "University"})
                                     )
                                     return render.DataGrid(
                                         university_counts,
@@ -740,9 +725,8 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                             if "contributor_count" not in data.columns:
                                                 "—"
                                             else:
-                                                counts = pd.to_numeric(data["contributor_count"], errors="coerce")
-                                                total = int(counts.dropna().sum()) if counts.notna().any() else 0
-                                                total
+                                                s = data["contributor_count"].cast(pl.Float64, strict=False).drop_nulls()
+                                                int(s.sum()) if len(s) > 0 else 0
 
                                 with ui.layout_columns(col_widths=(6, 6)):
                                     with ui.value_box(showcase=ICONS["license"]):
@@ -753,11 +737,11 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                             if "license" not in data.columns:
                                                 "—"
                                             else:
-                                                total = len(data)
+                                                total = data.height
                                                 if total == 0:
                                                     "0%"
                                                 else:
-                                                    with_license = int(data["license"].notna().sum())
+                                                    with_license = data["license"].is_not_null().sum()
                                                     pct = 100.0 * with_license / total
                                                     f"{pct:.1f}%"
 
@@ -770,11 +754,8 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                             if col not in data.columns:
                                                 "—"
                                             else:
-                                                try:
-                                                    v = pd.to_numeric(data[col], errors="coerce").mean()
-                                                    f"{v:.1f}" if not pd.isna(v) else "—"
-                                                except Exception:
-                                                    "—"
+                                                v = data[col].cast(pl.Float64, strict=False).mean()
+                                                f"{v:.1f}" if v is not None else "—"
 
                         # Type distribution + Community files presence
                         with ui.layout_columns(col_widths=(6, 6)):
@@ -877,12 +858,12 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 )
 
                             @render.download(
-                                filename=lambda: f"repositories_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                                filename=lambda: f"repositories_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                             )
                             def download_repositories_csv():
                                 out_df = repositories_table_df()
                                 buf = io.BytesIO()
-                                out_df.to_csv(buf, index=False, encoding="utf-8")
+                                out_df.write_csv(buf)
                                 buf.seek(0)
                                 yield buf.getvalue()
                         with ui.card():
@@ -896,8 +877,11 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 # Row position in the grid matches repositories_table_df (search + column drops).
                                 view = repositories_table_df()
                                 row_pos = selected_rows[0]
-                                sel = filtered_df().loc[view.index[row_pos]]
-                                selected = sel.iloc[0] if isinstance(sel, pd.DataFrame) else sel
+                                # Use html_url as key to look up the full row in filtered_df()
+                                _view_row = view.row(row_pos, named=True)
+                                _row_url = _view_row.get("html_url")
+                                _full_matches = filtered_df().filter(pl.col("html_url") == _row_url) if _row_url else pl.DataFrame()
+                                selected = _full_matches.row(0, named=True) if not _full_matches.is_empty() else _view_row
 
                                 _readme_md = _safe_markdown_text(selected.get("readme"))
                                 _contributing_md = _safe_markdown_text(selected.get("contributing"))
@@ -905,10 +889,10 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
 
                                 # Match security metrics row (from security_combined_clean.parquet) by html_url
                                 sec_row = None
-                                if not df_security.empty and "html_url" in df_security.columns:
-                                    _matches = df_security.loc[df_security["html_url"] == selected.get("html_url")]
-                                    if not _matches.empty:
-                                        sec_row = _matches.iloc[0]
+                                if not df_security.is_empty() and "html_url" in df_security.columns:
+                                    _matches = df_security.filter(pl.col("html_url") == selected.get("html_url"))
+                                    if not _matches.is_empty():
+                                        sec_row = _matches.row(0, named=True)
 
                                 # Two-column layout:
                                 # - Left column: Overview / Impact / Health / Security
@@ -1200,59 +1184,42 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 @render.data_frame
                                 def impact_leaderboard_table():
                                     data = filtered_df()
-                                    _cols = [
-                                        "University",
-                                        "Total\nstars",
-                                        "Total\nforks",
-                                        "Total\ndownloads",
-                                        "Total\ncontributors",
+                                    if data.is_empty():
+                                        return render.DataGrid(pl.DataFrame({
+                                            "University": [], "Total\nstars": [], "Total\nforks": [],
+                                            "Total\ndownloads": [], "Total\ncontributors": [],
+                                        }))
+
+                                    uni_expr = (
+                                        pl.col("university").fill_null("Unknown")
+                                        if "university" in data.columns
+                                        else pl.lit("Unknown")
+                                    ).alias("_uni")
+                                    agg = {
+                                        "Total\nstars": "stargazers_count",
+                                        "Total\nforks": "forks_count",
+                                        "Total\ndownloads": "release_downloads",
+                                        "Total\ncontributors": "contributor_count",
+                                    }
+                                    agg_exprs = [
+                                        pl.col(src).cast(pl.Float64, strict=False).sum().alias(dst)
+                                        if src in data.columns
+                                        else pl.lit(None).cast(pl.Float64).alias(dst)
+                                        for dst, src in agg.items()
                                     ]
-                                    if data.empty:
-                                        return render.DataGrid(pd.DataFrame(columns=_cols))
-
-                                    work = data.copy()
-                                    if "university" in work.columns:
-                                        work["_uni"] = work["university"].fillna("Unknown").astype(str)
-                                    else:
-                                        work["_uni"] = "Unknown"
-
-                                    rows = []
-                                    for uni, grp in work.groupby("_uni", dropna=False):
-                                        stars = (
-                                            pd.to_numeric(grp["stargazers_count"], errors="coerce")
-                                            if "stargazers_count" in grp.columns
-                                            else pd.Series(dtype=float)
-                                        ).sum()
-                                        forks = (
-                                            pd.to_numeric(grp["forks_count"], errors="coerce")
-                                            if "forks_count" in grp.columns
-                                            else pd.Series(dtype=float)
-                                        ).sum()
-                                        downloads = (
-                                            pd.to_numeric(grp["release_downloads"], errors="coerce")
-                                            if "release_downloads" in grp.columns
-                                            else pd.Series(dtype=float)
-                                        ).sum()
-                                        contributors = (
-                                            pd.to_numeric(grp["contributor_count"], errors="coerce")
-                                            if "contributor_count" in grp.columns
-                                            else pd.Series(dtype=float)
-                                        ).sum()
-                                        rows.append((uni, stars, forks, downloads, contributors))
-
-                                    out = pd.DataFrame(
-                                        rows,
-                                        columns=[
-                                            "University",
-                                            "Total\nstars",
-                                            "Total\nforks",
-                                            "Total\ndownloads",
-                                            "Total\ncontributors",
-                                        ],
+                                    out = (
+                                        data.with_columns(uni_expr)
+                                        .group_by("_uni")
+                                        .agg(agg_exprs)
+                                        .sort("Total\nstars", descending=True, nulls_last=True)
+                                        .rename({"_uni": "University"})
                                     )
-                                    for c in ("Total\nstars", "Total\nforks", "Total\ndownloads", "Total\ncontributors"):
-                                        out[c] = out[c].fillna(0).map(_format_thousands_approx)
-                                    out = out.sort_values("Total\nstars", ascending=False)
+                                    for col in agg:
+                                        out = out.with_columns(
+                                            pl.col(col)
+                                            .map_elements(_format_thousands_approx, return_dtype=pl.Utf8)
+                                            .alias(col)
+                                        )
 
                                     return render.DataGrid(
                                         out,
@@ -1278,8 +1245,8 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                             if "stargazers_count" not in data.columns:
                                                 "—"
                                             else:
-                                                s = pd.to_numeric(data["stargazers_count"], errors="coerce")
-                                                int(s.dropna().sum()) if s.notna().any() else 0
+                                                s = data["stargazers_count"].cast(pl.Float64, strict=False).drop_nulls()
+                                                int(s.sum()) if len(s) > 0 else 0
 
                                     with ui.value_box(showcase=ICONS["forks"]):
                                         "Total forks"
@@ -1289,8 +1256,8 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                             if "forks_count" not in data.columns:
                                                 "—"
                                             else:
-                                                s = pd.to_numeric(data["forks_count"], errors="coerce")
-                                                int(s.dropna().sum()) if s.notna().any() else 0
+                                                s = data["forks_count"].cast(pl.Float64, strict=False).drop_nulls()
+                                                int(s.sum()) if len(s) > 0 else 0
 
                                 with ui.layout_columns(col_widths=(6, 6)):
                                     with ui.value_box(showcase=ICONS["downloads"]):
@@ -1301,8 +1268,8 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                             if "release_downloads" not in data.columns:
                                                 "—"
                                             else:
-                                                s = pd.to_numeric(data["release_downloads"], errors="coerce")
-                                                int(s.dropna().sum()) if s.notna().any() else 0
+                                                s = data["release_downloads"].cast(pl.Float64, strict=False).drop_nulls()
+                                                int(s.sum()) if len(s) > 0 else 0
 
                                     with ui.value_box(showcase=ICONS["contributors"]):
                                         "Total contributors"
@@ -1312,8 +1279,8 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                             if "contributor_count" not in data.columns:
                                                 "—"
                                             else:
-                                                s = pd.to_numeric(data["contributor_count"], errors="coerce")
-                                                int(s.dropna().sum()) if s.notna().any() else 0
+                                                s = data["contributor_count"].cast(pl.Float64, strict=False).drop_nulls()
+                                                int(s.sum()) if len(s) > 0 else 0
 
                         # Distribution plots — 2 per row
                         with ui.layout_columns(col_widths=(6, 6)):
@@ -1371,48 +1338,38 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 @render.data_frame
                                 def sustainability_leaderboard_table():
                                     data = filtered_df()
-                                    _cols = [
-                                        "University",
-                                        "Average\n# Contributors",
-                                        "Average\nbus factor",
+                                    if data.is_empty():
+                                        return render.DataGrid(pl.DataFrame({
+                                            "University": [], "Average\n# Contributors": [], "Average\nbus factor": [],
+                                        }))
+
+                                    uni_expr = (
+                                        pl.col("university").fill_null("Unknown")
+                                        if "university" in data.columns
+                                        else pl.lit("Unknown")
+                                    ).alias("_uni")
+                                    agg_exprs = [
+                                        pl.col("contributor_count").cast(pl.Float64, strict=False).mean().alias("_avg_contrib")
+                                        if "contributor_count" in data.columns
+                                        else pl.lit(None).cast(pl.Float64).alias("_avg_contrib"),
+                                        pl.col("bus_factor").cast(pl.Float64, strict=False).mean().alias("_avg_bus")
+                                        if "bus_factor" in data.columns
+                                        else pl.lit(None).cast(pl.Float64).alias("_avg_bus"),
                                     ]
-                                    if data.empty:
-                                        return render.DataGrid(pd.DataFrame(columns=_cols))
-
-                                    work = data.copy()
-                                    if "university" in work.columns:
-                                        work["_uni"] = work["university"].fillna("Unknown").astype(str)
-                                    else:
-                                        work["_uni"] = "Unknown"
-
-                                    rows = []
-                                    for uni, grp in work.groupby("_uni", dropna=False):
-                                        cc = (
-                                            pd.to_numeric(grp["contributor_count"], errors="coerce")
-                                            if "contributor_count" in grp.columns
-                                            else pd.Series(dtype=float)
-                                        )
-                                        bf = (
-                                            pd.to_numeric(grp["bus_factor"], errors="coerce")
-                                            if "bus_factor" in grp.columns
-                                            else pd.Series(dtype=float)
-                                        )
-                                        avg_c = cc.mean() if cc.notna().any() else float("nan")
-                                        avg_b = bf.mean() if bf.notna().any() else float("nan")
-                                        rows.append((uni, avg_c, avg_b))
-
-                                    out = pd.DataFrame(
-                                        rows,
-                                        columns=["University", "_avg_contrib", "_avg_bus"],
+                                    agg = (
+                                        data.with_columns(uni_expr)
+                                        .group_by("_uni")
+                                        .agg(agg_exprs)
+                                        .sort("_avg_contrib", descending=True, nulls_last=True)
                                     )
-                                    out = out.sort_values("_avg_contrib", ascending=False, na_position="last")
-                                    out["Average\n# Contributors"] = out["_avg_contrib"].map(
-                                        lambda x: f"{x:.2f}" if pd.notna(x) else "—"
-                                    )
-                                    out["Average\nbus factor"] = out["_avg_bus"].map(
-                                        lambda x: f"{x:.2f}" if pd.notna(x) else "—"
-                                    )
-                                    out = out[["University", "Average\n# Contributors", "Average\nbus factor"]]
+
+                                    def _fmt(v):
+                                        return f"{v:.2f}" if v is not None and v == v else "—"
+
+                                    out = agg.with_columns([
+                                        pl.col("_avg_contrib").map_elements(_fmt, return_dtype=pl.Utf8).alias("Average\n# Contributors"),
+                                        pl.col("_avg_bus").map_elements(_fmt, return_dtype=pl.Utf8).alias("Average\nbus factor"),
+                                    ]).rename({"_uni": "University"}).select(["University", "Average\n# Contributors", "Average\nbus factor"])
 
                                     return render.DataGrid(
                                         out,
@@ -1436,8 +1393,8 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                         if col not in data.columns:
                                             "—"
                                         else:
-                                            v = pd.to_numeric(data[col], errors="coerce").mean()
-                                            f"{v:.2f}" if not pd.isna(v) else "—"
+                                            v = data[col].cast(pl.Float64, strict=False).mean()
+                                            f"{v:.2f}" if v is not None else "—"
 
                                 with ui.value_box(showcase=ICONS["contributors"]):
                                     "Average # contributors"
@@ -1447,10 +1404,8 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                         if "contributor_count" not in data.columns:
                                             "—"
                                         else:
-                                            v = pd.to_numeric(
-                                                data["contributor_count"], errors="coerce"
-                                            ).mean()
-                                            f"{v:.2f}" if not pd.isna(v) else "—"
+                                            v = data["contributor_count"].cast(pl.Float64, strict=False).mean()
+                                            f"{v:.2f}" if v is not None else "—"
 
                         # Plots — 2 per row
                         with ui.layout_columns(col_widths=(6, 6)):
@@ -1511,7 +1466,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 @render.data_frame
                                 def security_scorecard_table():
                                     out = security_repositories_table_df()
-                                    if out.empty:
+                                    if out.is_empty():
                                         return render.DataGrid(out)
                                     return render.DataGrid(
                                         out,
@@ -1533,22 +1488,24 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 def security_metric_averages_heatmap():
                                     df_avg = security_metric_averages_df()
 
-                                    if df_avg.empty or df_avg["Average"].notna().sum() == 0:
+                                    if df_avg.is_empty() or df_avg["Average"].is_not_null().sum() == 0:
                                         return (
-                                            alt.Chart(pd.DataFrame({"Metric": [], "x": [], "Average": []}))
+                                            alt.Chart(pl.DataFrame({"Metric": [], "x": [], "Average": []}).to_pandas())
                                             .mark_rect()
                                             .properties(title="Metric averages")
                                         )
 
-                                    df_avg = df_avg.copy()
-                                    df_avg["Label"] = df_avg["Average"].apply(
-                                        lambda v: f"{v:.2f}" if pd.notna(v) else ""
-                                    )
-                                    df_avg["x"] = "Average"
-                                    metric_order = df_avg["Metric"].tolist()
+                                    df_avg = df_avg.with_columns([
+                                        pl.col("Average").map_elements(
+                                            lambda v: f"{v:.2f}" if v is not None else "",
+                                            return_dtype=pl.Utf8,
+                                        ).alias("Label"),
+                                        pl.lit("Average").alias("x"),
+                                    ])
+                                    metric_order = df_avg["Metric"].to_list()
 
                                     # Exclude spacer row (Metric=" ") from rendering
-                                    plot_df = df_avg[df_avg["Metric"].str.strip() != ""].copy()
+                                    plot_df = df_avg.filter(pl.col("Metric").str.strip_chars() != "")
 
                                     rects = (
                                         alt.Chart(plot_df)
@@ -1633,39 +1590,39 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 @render.express
                                 def org_value_url():
                                     data = filtered_org_df()
-                                    if data.empty or "url" not in data.columns:
+                                    if data.is_empty() or "url" not in data.columns:
                                         "—"
                                     else:
-                                        has = data["url"].dropna().astype(str).str.strip()
-                                        has = has[has.str.len() > 0]
-                                        pct = len(has) / len(data) * 100
-                                        f"{pct:.1f}%"
+                                        has = data.filter(
+                                            pl.col("url").is_not_null() & (pl.col("url").str.strip_chars().str.len_chars() > 0)
+                                        ).height
+                                        f"{has / data.height * 100:.1f}%"
 
                             with ui.value_box(showcase=ICONS["description"]):
                                 "With description"
                                 @render.express
                                 def org_value_description():
                                     data = filtered_org_df()
-                                    if data.empty or "description" not in data.columns:
+                                    if data.is_empty() or "description" not in data.columns:
                                         "—"
                                     else:
-                                        has = data["description"].dropna().astype(str).str.strip()
-                                        has = has[has.str.len() > 0]
-                                        pct = len(has) / len(data) * 100
-                                        f"{pct:.1f}%"
+                                        has = data.filter(
+                                            pl.col("description").is_not_null() & (pl.col("description").str.strip_chars().str.len_chars() > 0)
+                                        ).height
+                                        f"{has / data.height * 100:.1f}%"
 
                             with ui.value_box(showcase=ICONS["email"]):
                                 "With email"
                                 @render.express
                                 def org_value_email():
                                     data = filtered_org_df()
-                                    if data.empty or "email" not in data.columns:
+                                    if data.is_empty() or "email" not in data.columns:
                                         "—"
                                     else:
-                                        has = data["email"].dropna().astype(str).str.strip()
-                                        has = has[has.str.len() > 0]
-                                        pct = len(has) / len(data) * 100
-                                        f"{pct:.1f}%"
+                                        has = data.filter(
+                                            pl.col("email").is_not_null() & (pl.col("email").str.strip_chars().str.len_chars() > 0)
+                                        ).height
+                                        f"{has / data.height * 100:.1f}%"
 
                         # Organizations per university chart
                         with ui.card():
@@ -1673,15 +1630,14 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                             @render_altair
                             def org_plot_per_university():
                                 data = filtered_org_df()
-                                if data.empty or "university" not in data.columns:
-                                    return alt.Chart(pd.DataFrame()).mark_bar().properties(width="container", height="container")
+                                if data.is_empty() or "university" not in data.columns:
+                                    return alt.Chart(pl.DataFrame({"university": [], "count": []}).to_pandas()).mark_bar().properties(width="container", height="container")
                                 counts = (
-                                    data.groupby("university")
-                                    .size()
-                                    .reset_index(name="count")
-                                    .sort_values("count", ascending=False)
+                                    data.group_by("university")
+                                    .agg(pl.len().alias("count"))
+                                    .sort("count", descending=True)
                                     .head(20)
-                                )
+                                ).to_pandas()
                                 return (
                                     alt.Chart(counts)
                                     .mark_bar(color="#378ADD")
@@ -1700,13 +1656,17 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                             @render_altair
                             def org_plot_created_per_year():
                                 data = filtered_org_df()
-                                if data.empty or "created_at" not in data.columns:
-                                    return alt.Chart(pd.DataFrame()).mark_bar().properties(width="container", height="container")
-                                dates = pd.to_datetime(data["created_at"], errors="coerce")
-                                years = dates.dt.year.dropna().astype(int)
-                                counts = years.value_counts().reset_index()
-                                counts.columns = ["year", "count"]
-                                counts = counts.sort_values("year")
+                                if data.is_empty() or "created_at" not in data.columns:
+                                    return alt.Chart(pl.DataFrame({"year": [], "count": []}).to_pandas()).mark_bar().properties(width="container", height="container")
+                                counts = (
+                                    data.with_columns(
+                                        pl.col("created_at").str.slice(0, 4).cast(pl.Int32, strict=False).alias("year")
+                                    )
+                                    .filter(pl.col("year").is_not_null())
+                                    .group_by("year")
+                                    .agg(pl.len().alias("count"))
+                                    .sort("year")
+                                ).to_pandas()
                                 return (
                                     alt.Chart(counts)
                                     .mark_bar(color="#185FA5")
@@ -1724,8 +1684,8 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                             @render_altair
                             def org_plot_profile_completeness():
                                 data = filtered_org_df()
-                                if data.empty:
-                                    return alt.Chart(pd.DataFrame()).mark_bar().properties(width="container", height="container")
+                                if data.is_empty():
+                                    return alt.Chart(pl.DataFrame({"field": [], "pct": []}).to_pandas()).mark_bar().properties(width="container", height="container")
                                 fields = {
                                     "Description": "description",
                                     "Location": "location",
@@ -1736,13 +1696,14 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 rows = []
                                 for label, col in fields.items():
                                     if col in data.columns:
-                                        filled = data[col].dropna().astype(str).str.strip()
-                                        filled = filled[filled.str.len() > 0]
-                                        pct = round(len(filled) / len(data) * 100, 1)
+                                        filled = data.filter(
+                                            pl.col(col).is_not_null() & (pl.col(col).str.strip_chars().str.len_chars() > 0)
+                                        ).height
+                                        pct = round(filled / data.height * 100, 1)
                                     else:
                                         pct = 0.0
                                     rows.append({"field": label, "pct": pct})
-                                df_plot = pd.DataFrame(rows)
+                                df_plot = pl.DataFrame(rows).to_pandas()
                                 return (
                                     alt.Chart(df_plot)
                                     .mark_bar(color="#1D9E75")
@@ -1771,17 +1732,19 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                         )
                         @render.data_frame
                         def org_browse_table():
-                            data = filtered_org_df().copy()
-                            if data.empty:
-                                return render.DataGrid(pd.DataFrame())
+                            data = filtered_org_df()
+                            if data.is_empty():
+                                return render.DataGrid(pl.DataFrame())
 
                             search = (input.org_search() or "").strip().lower()
                             if search:
-                                mask = pd.Series(False, index=data.index)
-                                for col in ["login", "name", "description", "university", "location", "email", "url"]:
-                                    if col in data.columns:
-                                        mask |= data[col].astype(str).str.lower().str.contains(search, na=False)
-                                data = data[mask]
+                                search_cols = ["login", "name", "description", "university", "location", "email", "url"]
+                                conditions = [
+                                    pl.col(c).cast(pl.Utf8).str.to_lowercase().str.contains(search, literal=True)
+                                    for c in search_cols if c in data.columns
+                                ]
+                                if conditions:
+                                    data = data.filter(pl.any_horizontal(conditions))
 
                             col_map = {
                                 "login": "Login",
@@ -1797,22 +1760,28 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                 "affiliation_prediction_orgs": "Affiliation score",
                             }
                             display_cols = [c for c in col_map if c in data.columns]
-                            out = data[display_cols].rename(columns=col_map)
+                            out = data.select(display_cols).rename(col_map)
 
                             if "Created" in out.columns:
-                                out["Created"] = pd.to_datetime(out["Created"], errors="coerce").dt.strftime("%Y-%m")
+                                out = out.with_columns(
+                                    pl.col("Created").str.slice(0, 7).alias("Created")
+                                )
                             if "Affiliation score" in out.columns:
-                                out["Affiliation score"] = pd.to_numeric(out["Affiliation score"], errors="coerce").map(
-                                    lambda x: f"{x:.2f}" if pd.notna(x) else "—"
+                                out = out.with_columns(
+                                    pl.col("Affiliation score")
+                                    .cast(pl.Float64, strict=False)
+                                    .map_elements(lambda v: f"{v:.2f}" if v is not None else "—", return_dtype=pl.Utf8)
+                                    .alias("Affiliation score")
                                 )
                             if "Login" in out.columns:
-                                out.insert(
-                                    out.columns.get_loc("Login") + 1,
-                                    "GitHub URL",
-                                    out["Login"].apply(
-                                        lambda v: f"https://github.com/{v}" if pd.notna(v) and str(v).strip() else "—"
-                                    ),
-                                )
+                                login_idx = out.columns.index("Login")
+                                github_url = out["Login"].map_elements(
+                                    lambda v: f"https://github.com/{v}" if v and str(v).strip() else "—",
+                                    return_dtype=pl.Utf8,
+                                ).alias("GitHub URL")
+                                cols_before = out.columns[:login_idx + 1]
+                                cols_after = out.columns[login_idx + 1:]
+                                out = out.select(list(cols_before) + [github_url] + [pl.col(c) for c in cols_after])
 
                             return render.DataGrid(
                                 out,
@@ -1821,12 +1790,12 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                             )
 
                         @render.download(
-                            filename=lambda: f"organizations_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                            filename=lambda: f"organizations_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                         )
                         def download_orgs_csv():
                             data = filtered_org_df()
                             buf = io.BytesIO()
-                            data.to_csv(buf, index=False, encoding="utf-8")
+                            data.write_csv(buf)
                             buf.seek(0)
                             yield buf.getvalue()
 
@@ -1842,64 +1811,52 @@ def _reset_org_filters():
 
 @reactive.calc
 def filtered_org_df():
-    data = df_organizations.copy()
-    if data.empty:
+    data = df_organizations
+    if data.is_empty():
         return data
 
     if input.org_university():
-        data = data[data["university"].isin(input.org_university())]
-
-
+        data = data.filter(pl.col("university").is_in(list(input.org_university())))
     if "affiliation_prediction_orgs" in data.columns and input.slider_org_threshold():
         min_val, max_val = input.slider_org_threshold()
-        pred = pd.to_numeric(data["affiliation_prediction_orgs"], errors="coerce")
-        data = data[(pred >= min_val) & (pred <= max_val)]
+        data = data.filter(pl.col("affiliation_prediction_orgs").is_between(min_val, max_val))
 
     return data
 
 
 @reactive.calc
 def filtered_df():
-    mask = pd.Series(True, index=df.index)
+    result = df
 
     if input.university():
-        mask &= df["university"].isin(input.university())
+        result = result.filter(pl.col("university").is_in(list(input.university())))
     if input.type():
-        mask &= df["type_prediction_gpt_5_mini"].isin(input.type())
+        result = result.filter(pl.col("type_prediction_gpt_5_mini").is_in(list(input.type())))
     if input.license():
-        mask &= df["license"].isin(input.license())
+        result = result.filter(pl.col("license").is_in(list(input.license())))
     if input.language():
-        mask &= df["language"].isin(input.language())
+        result = result.filter(pl.col("language").is_in(list(input.language())))
     if input.slider_stars():
         min_val, max_val = input.slider_stars()
-        stars = pd.to_numeric(df["stargazers_count"], errors="coerce")
-        mask &= (stars >= min_val) & (stars <= max_val)
+        result = result.filter(pl.col("stargazers_count").is_between(min_val, max_val))
     if input.slider_forks():
         min_val, max_val = input.slider_forks()
-        forks = pd.to_numeric(df["forks_count"], errors="coerce")
-        mask &= (forks >= min_val) & (forks <= max_val)
+        result = result.filter(pl.col("forks_count").is_between(min_val, max_val))
     if input.slider_downloads():
         min_val, max_val = input.slider_downloads()
-        downloads = pd.to_numeric(df["release_downloads"], errors="coerce")
-        mask &= (downloads >= min_val) & (downloads <= max_val)
+        result = result.filter(pl.col("release_downloads").is_between(min_val, max_val))
     if input.slider_threshold():
         min_val, max_val = input.slider_threshold()
-        aff = pd.to_numeric(df["affiliation_prediction_gpt_5_mini"], errors="coerce")
-        mask &= (aff >= min_val) & (aff <= max_val)
+        result = result.filter(pl.col("affiliation_prediction_gpt_5_mini").is_between(min_val, max_val))
 
-    # Apply chat filters - combine with manual filters (only when chat is active and has results)
-    result = df.loc[mask]
-
+    # Chat filter (ENABLE_CHAT=False; if re-enabled, querychat must be updated for Polars)
     if ENABLE_CHAT and chat is not None:
         try:
             chat_df = chat.df()
             if chat_df is not None and len(chat_df) > 0:
                 if "id" in chat_df.columns:
-                    chat_ids = set(chat_df["id"].values)
-                    result = result[result["id"].isin(chat_ids)]
-                else:
-                    chat_indices = set(chat_df.index)
-                    result = result[result.index.isin(chat_indices)]
+                    chat_ids = list(chat_df["id"].values)
+                    result = result.filter(pl.col("id").is_in(chat_ids))
         except Exception:
             pass
 
@@ -1920,25 +1877,20 @@ _REPO_TABLE_DROP_COLS = [
 @reactive.calc
 def repositories_table_df():
     """Same rows/columns as the Repositories DataGrid (filters + search)."""
-    data = filtered_df().drop(columns=_REPO_TABLE_DROP_COLS, errors="ignore")
-    if input.table_search() and len(input.table_search().strip()) > 0:
-        search_term = input.table_search().strip().lower()
+    drop = [c for c in _REPO_TABLE_DROP_COLS if c in filtered_df().columns]
+    data = filtered_df().drop(drop)
+    search_term = (input.table_search() or "").strip().lower()
+    if search_term:
         searchable_columns = [
-            "full_name",
-            "owner",
-            "description",
-            "language",
-            "license",
-            "university",
-            "affiliation_prediction_gpt_5_mini",
+            "full_name", "owner", "description", "language", "license",
+            "university", "affiliation_prediction_gpt_5_mini",
         ]
-        mask = pd.Series([False] * len(data), index=data.index)
-        for col in searchable_columns:
-            if col in data.columns:
-                mask |= data[col].astype(str).str.lower().str.contains(
-                    search_term, na=False
-                )
-        data = data[mask]
+        conditions = [
+            pl.col(c).cast(pl.Utf8).str.to_lowercase().str.contains(search_term, literal=True)
+            for c in searchable_columns if c in data.columns
+        ]
+        if conditions:
+            data = data.filter(pl.any_horizontal(conditions))
     return data
 
 
@@ -1948,47 +1900,46 @@ def security_repositories_table_df():
     One row per filtered repository: ``html_url`` plus scorecard columns from
     ``df_security`` (left join on ``html_url``).
     """
-    base = filtered_df().drop(columns=_REPO_TABLE_DROP_COLS, errors="ignore")
-    if "html_url" in base.columns:
-        work = base[["html_url"]].copy()
-    else:
-        work = pd.DataFrame(index=base.index)
-        work["html_url"] = pd.NA
+    base = filtered_df()
+    work = (
+        base.select("html_url") if "html_url" in base.columns
+        else base.select([]).with_columns(pl.lit(None).cast(pl.Utf8).alias("html_url"))
+    )
 
     metric_pairs = [
-        (d, s)
-        for d, s in SECURITY_SCORECARD_METRICS
-        if s in df_security.columns
+        (d, s) for d, s in SECURITY_SCORECARD_METRICS if s in df_security.columns
     ]
     can_merge = (
-        not df_security.empty
+        not df_security.is_empty()
         and "html_url" in df_security.columns
         and bool(metric_pairs)
     )
 
     if can_merge:
         s_cols = ["html_url"] + [s for _, s in metric_pairs]
-        sec = df_security[s_cols].drop_duplicates(subset=["html_url"], keep="first")
-        out = work.merge(sec, on="html_url", how="left")
-        out = out.rename(columns={s: d for d, s in metric_pairs})
+        sec = (
+            df_security.select(s_cols)
+            .unique(subset=["html_url"], keep="first")
+            .rename({s: d for d, s in metric_pairs})
+        )
+        out = work.join(sec, on="html_url", how="left")
     else:
-        out = work.copy()
+        out = work
 
     for d, _ in SECURITY_SCORECARD_METRICS:
         if d not in out.columns:
-            out[d] = pd.NA
+            out = out.with_columns(pl.lit(None).alias(d))
 
     _total_col = "Total score"
     if _total_col in out.columns:
-        out = out.sort_values(
-            by=_total_col,
-            key=lambda s: pd.to_numeric(s, errors="coerce"),
-            ascending=False,
-            na_position="last",
+        out = (
+            out.with_columns(pl.col(_total_col).cast(pl.Float64, strict=False).alias("_sort_key"))
+            .sort("_sort_key", descending=True, nulls_last=True)
+            .drop("_sort_key")
         )
 
     metric_displays = [d for d, _ in SECURITY_SCORECARD_METRICS]
-    return out[["html_url"] + metric_displays]
+    return out.select(["html_url"] + [d for d in metric_displays if d in out.columns])
 
 
 @reactive.calc
@@ -2000,20 +1951,18 @@ def security_metric_averages_df():
     rows = []
     for disp, _src in SECURITY_SCORECARD_METRICS:
         if disp not in wide.columns:
-            rows.append((disp, float("nan")))
+            rows.append({"Metric": disp, "Average": None})
             continue
-        s = pd.to_numeric(wide[disp], errors="coerce")
-        s = s[s.notna() & (s != -1)]
-        avg = float(s.mean()) if len(s) > 0 else float("nan")
-        rows.append((disp, avg))
-    out = pd.DataFrame(rows, columns=["Metric", "Average"])
-    total_mask = out["Metric"].eq("Total score")
-    main = out.loc[~total_mask].sort_values(
-        "Average", ascending=False, na_position="last"
-    )
-    total_row = out.loc[total_mask]
-    if total_row.empty:
+        s = wide[disp].cast(pl.Float64, strict=False)
+        valid = s.filter(s.is_not_null() & (s != -1))
+        avg = float(valid.mean()) if len(valid) > 0 else None
+        rows.append({"Metric": disp, "Average": avg})
+    out = pl.DataFrame(rows, schema={"Metric": pl.Utf8, "Average": pl.Float64})
+    total_mask = out["Metric"] == "Total score"
+    main = out.filter(~total_mask).sort("Average", descending=True, nulls_last=True)
+    total_row = out.filter(total_mask)
+    if total_row.is_empty():
         return main
-    sep_row = pd.DataFrame([{"Metric": " ", "Average": float("nan")}])
-    return pd.concat([main, sep_row, total_row], ignore_index=True)
+    sep_row = pl.DataFrame({"Metric": [" "], "Average": [None]}, schema={"Metric": pl.Utf8, "Average": pl.Float64})
+    return pl.concat([main, sep_row, total_row])
 
