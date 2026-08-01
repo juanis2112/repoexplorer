@@ -39,7 +39,7 @@ def plot_contributors_distribution_bar_altair(
         or _VALUE_COL not in filtered_data.columns
     ):
         return (
-            alt.Chart(pl.DataFrame({"bucket": [], "Count": []}).to_pandas())
+            alt.Chart(pl.DataFrame({"bucket": pl.Series([], dtype=pl.Utf8), "Count": pl.Series([], dtype=pl.Int64)}))
             .mark_bar()
             .properties(width=width, height=height, title="Contributors Distribution")
         )
@@ -62,7 +62,7 @@ def plot_contributors_distribution_bar_altair(
             .map_elements(lambda c: f"{c:.1f}%", return_dtype=pl.Utf8)
             .alias("Label")
         )
-    ).to_pandas()
+    )
 
     y_max = int(counts["Count"].max() * 1.15) + 1
     colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
