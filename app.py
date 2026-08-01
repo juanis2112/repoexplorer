@@ -641,6 +641,10 @@ ICONS = {
     "stars": icon_svg("star"),
     "forks": icon_svg("code-fork"),
     "downloads": icon_svg("download"),
+    "organizations": icon_svg("building"),
+    "link": icon_svg("link"),
+    "description": icon_svg("pen-to-square"),
+    "email": icon_svg("envelope"),
 }
 
 _about_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "about.md")
@@ -1618,13 +1622,13 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                     with ui.layout_columns(col_widths=(6, 6)):
                         # Value boxes 2x2
                         with ui.layout_columns(col_widths=(6, 6)):
-                            with ui.value_box(showcase=ICONS["repos"]):
+                            with ui.value_box(showcase=ICONS["organizations"]):
                                 "Total organizations"
                                 @render.express
                                 def org_value_total():
                                     f"{len(filtered_org_df()):,}"
 
-                            with ui.value_box(showcase=ICONS["contributors"]):
+                            with ui.value_box(showcase=ICONS["link"]):
                                 "With URL"
                                 @render.express
                                 def org_value_url():
@@ -1637,7 +1641,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                         pct = len(has) / len(data) * 100
                                         f"{pct:.1f}%"
 
-                            with ui.value_box(showcase=ICONS["active"]):
+                            with ui.value_box(showcase=ICONS["description"]):
                                 "With description"
                                 @render.express
                                 def org_value_description():
@@ -1650,7 +1654,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                         pct = len(has) / len(data) * 100
                                         f"{pct:.1f}%"
 
-                            with ui.value_box(showcase=ICONS["contributors"]):
+                            with ui.value_box(showcase=ICONS["email"]):
                                 "With email"
                                 @render.express
                                 def org_value_email():
