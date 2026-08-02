@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import os
 from concurrent.futures import ThreadPoolExecutor
-import pandas as pd
 import polars as pl
 from shiny.express import input, ui, render
 from shiny import reactive
@@ -17,16 +16,14 @@ import io
 import json
 import logging
 import querychat as qc
-from repoexplorer.analysis.type_distribution import plot_type_distribution, plot_type_distribution_altair
-from repoexplorer.analysis.language_distribution_by_type import plot_language_distribution_by_type, plot_language_distribution_by_type_altair
-from repoexplorer.analysis.language_distribution import plot_language_distribution, plot_language_distribution_altair
-from repoexplorer.analysis.license_distribution_by_type import plot_license_distribution_by_type, plot_license_distribution_by_type_altair
-from repoexplorer.analysis.license_distribution import plot_license_distribution, plot_license_distribution_altair
-from repoexplorer.analysis.feature_counts_per_type import plot_feature_counts_per_type, plot_feature_counts_per_type_altair
-from repoexplorer.analysis.feature_counts import plot_feature_counts, plot_feature_counts_altair
-from repoexplorer.analysis.university_distribution import plot_university_distribution
-from repoexplorer.analysis.feature_heatmap_per_stars import plot_feature_heatmap_by_star_bucket, plot_feature_heatmap_by_star_bucket_altair
-from repoexplorer.analysis.commit_history import plot_commit_history
+from repoexplorer.analysis.type_distribution import plot_type_distribution_altair
+from repoexplorer.analysis.language_distribution_by_type import plot_language_distribution_by_type_altair
+from repoexplorer.analysis.language_distribution import plot_language_distribution_altair
+from repoexplorer.analysis.license_distribution_by_type import plot_license_distribution_by_type_altair
+from repoexplorer.analysis.license_distribution import plot_license_distribution_altair
+from repoexplorer.analysis.feature_counts_per_type import plot_feature_counts_per_type_altair
+from repoexplorer.analysis.feature_counts import plot_feature_counts_altair
+from repoexplorer.analysis.feature_heatmap_per_stars import plot_feature_heatmap_by_star_bucket_altair
 from repoexplorer.analysis.stars_distribution_bar import plot_stars_distribution_bar_altair
 from repoexplorer.analysis.forks_distribution_bar import plot_forks_distribution_bar_altair
 from repoexplorer.analysis.release_downloads_distribution_bar import plot_release_downloads_distribution_bar_altair
@@ -59,9 +56,14 @@ PARQUET_BASE = "Data/parquet"
 # COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_combined_clean.parquet")
 # SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_combined_clean.parquet")
 
-COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_reduced_combined_stars_gt_0.parquet")
-SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_reduced_combined_stars_gt_0.parquet")
-ORGANIZATIONS_PARQUET = "../repofinder/Data/parquet/organizations.parquet"
+# COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_reduced_combined_stars_gt_0.parquet")
+# SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_reduced_combined_stars_gt_0.parquet")
+# ORGANIZATIONS_PARQUET = "../repofinder/Data/parquet/organizations.parquet"
+
+
+COMBINED_PARQUET = os.path.join(PARQUET_BASE, "repositories_reduced_affiliated.parquet")
+SECURITY_PARQUET = os.path.join(PARQUET_BASE, "security_reduced_affiliated.parquet")
+ORGANIZATIONS_PARQUET = os.path.join(PARQUET_BASE, "organizations_reduced_affiliated.parquet")
 # CONTRIBUTORS_PARQUET = os.path.join(PARQUET_BASE, "contributors_combined_clean.parquet")
 # COMMITS_PARQUET = os.path.join(PARQUET_BASE, "commits_combined_clean.parquet")
 
@@ -207,82 +209,6 @@ def _normalize_license_column(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _make_feature_counts_combined_fig(
-    data,
-    features,
-    acronym="",
-    figsize=(8, 6),
-    label_size=8,
-    title_size=12,
-    textprops=8,
-):
-    """
-    Helper to build the combined feature-counts figure so it can be reused
-    both for on-screen rendering and download without duplicating code.
-    """
-    fig, ax = plt.subplots(figsize=figsize)
-    plot_feature_counts(
-        data,
-        features,
-        acronym=acronym,
-        ax=ax,
-        label_size=label_size,
-        title_size=title_size,
-        textprops=textprops,
-    )
-    return fig
-
-
-def _make_license_combined_fig(
-    data,
-    acronym: str = "",
-    figsize=(8, 6),
-    label_size: int = 10,
-    title_size: int = 12,
-    textprops: int = 7,
-    other_thres: float = 0.009,
-):
-    """
-    Helper to build the combined license distribution figure.
-    Reused for on-screen rendering and download.
-    """
-    fig, ax = plt.subplots(figsize=figsize)
-    plot_license_distribution(
-        data,
-        acronym=acronym,
-        ax=ax,
-        label_size=label_size,
-        title_size=title_size,
-        textprops=textprops,
-        other_thres=other_thres,
-    )
-    return fig
-
-
-def _make_language_combined_fig(
-    data,
-    acronym: str = "",
-    figsize=(8, 6),
-    label_size: int = 10,
-    title_size: int = 12,
-    props: int = 9,
-    other_thres: float = 0.1,
-):
-    """
-    Helper to build the combined language distribution figure.
-    Reused for on-screen rendering and download.
-    """
-    fig, ax = plt.subplots(figsize=figsize)
-    plot_language_distribution(
-        data,
-        acronym=acronym,
-        ax=ax,
-        label_size=label_size,
-        title_size=title_size,
-        props=props,
-        other_thres=other_thres,
-    )
-    return fig
 
 
 # Read data from public bucket
@@ -481,9 +407,9 @@ ui.tags.script("""
 
 if DATA == "remote":
     # Usage Shiny app
-    _df_pl = read_parquet_from_s3_public("repoexplorer-data", "repositories_reduced_combined_stars_gt_0.parquet", columns=COLUMNS_TO_LOAD)
-    _df_security_pl = read_parquet_from_s3_public("repoexplorer-data", "security_reduced_combined_stars_gt_0.parquet")
-    _df_organizations_pl = read_parquet_from_s3_public("repoexplorer-data", "organizations.parquet")
+    _df_pl = read_parquet_from_s3_public("repoexplorer-data", "repositories_reduced_affiliated.parquet", columns=COLUMNS_TO_LOAD)
+    _df_security_pl = read_parquet_from_s3_public("repoexplorer-data", "security_reduced_affiliated.parquet")
+    _df_organizations_pl = read_parquet_from_s3_public("repoexplorer-data", "organizations_reduced_affiliated.parquet")
 
 else:
     # Load main repositories table
@@ -651,7 +577,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
             with ui.sidebar(open="open", bg="#f8f8f8", width="250px"):
                 with ui.navset_pill(id="side_tab"):
                     with ui.nav_panel("Manual Filters"):
-                        ui.input_slider("slider_threshold", "Prediction Threshold", min=0, max=1, value=[0.8, 1])
+                        ui.input_slider("slider_threshold", "Prediction Threshold", min=0.5, max=1, value=[0.8, 1])
                         ui.input_selectize("university", "University:", universities, multiple=True)
                         ui.input_selectize("type", "Project Type:", types, multiple=True)
                         ui.input_selectize("license", "License:", licenses, multiple=True)
@@ -793,7 +719,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                         label_size=_OVERVIEW_LABEL_SIZE,
                                         title_size=_OVERVIEW_TITLE_SIZE,
                                         textprops=_OVERVIEW_PIE_PCT_SIZE,
-                                        other_thres=0.05,
+                                        top_n=8,
                                     )
 
                             with ui.card():
@@ -805,22 +731,10 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                         label_size=_OVERVIEW_LABEL_SIZE,
                                         title_size=_OVERVIEW_TITLE_SIZE,
                                         textprops=_OVERVIEW_PIE_PCT_SIZE,
-                                        other_thres=0.02,
+                                        top_n=8,
                                     )
         
                         with ui.layout_columns(col_widths=(6, 6)):
-                            with ui.card():
-                                @render_altair
-                                def plot_license():
-                                    return plot_license_distribution_by_type_altair(
-                                        filtered_df(),
-                                        acronym="",
-                                        label_size=_OVERVIEW_LABEL_SIZE,
-                                        title_size=_OVERVIEW_TITLE_SIZE,
-                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
-                                        other_thres=0.009,
-                                    )
-
                             with ui.card():
                                 @render_altair
                                 def plot_language():
@@ -830,7 +744,19 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                         label_size=_OVERVIEW_LABEL_SIZE,
                                         title_size=_OVERVIEW_TITLE_SIZE,
                                         textprops=_OVERVIEW_BAR_PCT_SIZE,
-                                        other_thres=0.02,
+                                        top_n=8,
+                                    )
+
+                            with ui.card():
+                                @render_altair
+                                def plot_license():
+                                    return plot_license_distribution_by_type_altair(
+                                        filtered_df(),
+                                        acronym="",
+                                        label_size=_OVERVIEW_LABEL_SIZE,
+                                        title_size=_OVERVIEW_TITLE_SIZE,
+                                        textprops=_OVERVIEW_BAR_PCT_SIZE,
+                                        top_n=8,
                                     )
     
 
@@ -1490,7 +1416,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
 
                                     if df_avg.is_empty() or df_avg["Average"].is_not_null().sum() == 0:
                                         return (
-                                            alt.Chart(pl.DataFrame({"Metric": [], "x": [], "Average": []}).to_pandas())
+                                            alt.Chart(pl.DataFrame({"Metric": [], "x": [], "Average": []}))
                                             .mark_rect()
                                             .properties(title="Metric averages")
                                         )
@@ -1631,13 +1557,13 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                             def org_plot_per_university():
                                 data = filtered_org_df()
                                 if data.is_empty() or "university" not in data.columns:
-                                    return alt.Chart(pl.DataFrame({"university": [], "count": []}).to_pandas()).mark_bar().properties(width="container", height="container")
+                                    return alt.Chart(pl.DataFrame({"university": [], "count": []})).mark_bar().properties(width="container", height="container")
                                 counts = (
                                     data.group_by("university")
                                     .agg(pl.len().alias("count"))
                                     .sort("count", descending=True)
                                     .head(20)
-                                ).to_pandas()
+                                )
                                 return (
                                     alt.Chart(counts)
                                     .mark_bar(color="#378ADD")
@@ -1657,7 +1583,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                             def org_plot_created_per_year():
                                 data = filtered_org_df()
                                 if data.is_empty() or "created_at" not in data.columns:
-                                    return alt.Chart(pl.DataFrame({"year": [], "count": []}).to_pandas()).mark_bar().properties(width="container", height="container")
+                                    return alt.Chart(pl.DataFrame({"year": [], "count": []})).mark_bar().properties(width="container", height="container")
                                 counts = (
                                     data.with_columns(
                                         pl.col("created_at").str.slice(0, 4).cast(pl.Int32, strict=False).alias("year")
@@ -1666,7 +1592,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                     .group_by("year")
                                     .agg(pl.len().alias("count"))
                                     .sort("year")
-                                ).to_pandas()
+                                )
                                 return (
                                     alt.Chart(counts)
                                     .mark_bar(color="#185FA5")
@@ -1685,7 +1611,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                             def org_plot_profile_completeness():
                                 data = filtered_org_df()
                                 if data.is_empty():
-                                    return alt.Chart(pl.DataFrame({"field": [], "pct": []}).to_pandas()).mark_bar().properties(width="container", height="container")
+                                    return alt.Chart(pl.DataFrame({"field": [], "pct": []})).mark_bar().properties(width="container", height="container")
                                 fields = {
                                     "Description": "description",
                                     "Location": "location",
@@ -1703,7 +1629,7 @@ with ui.navset_pill(id="main_tab", selected="Repositories"):
                                     else:
                                         pct = 0.0
                                     rows.append({"field": label, "pct": pct})
-                                df_plot = pl.DataFrame(rows).to_pandas()
+                                df_plot = pl.DataFrame(rows)
                                 return (
                                     alt.Chart(df_plot)
                                     .mark_bar(color="#1D9E75")
