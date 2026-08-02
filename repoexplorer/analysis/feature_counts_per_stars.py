@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
-import pandas as pd
+import polars as pl
 import numpy as np
+
 
 def plot_feature_distribution_by_star_bucket(
     df, features, star_col='stargazers_count', ax=None,
@@ -28,9 +29,14 @@ def plot_feature_distribution_by_star_bucket(
         else:
             return '>500'
 
-    df = df.copy()
-    df['star_bucket'] = df[star_col].apply(get_star_bucket)
-    total_repositories = len(df)
+    # Accept both Polars DataFrames and anything with a star_col series
+    if not isinstance(df, pl.DataFrame):
+        df = pl.DataFrame(df)
+
+    df = df.with_columns(
+        pl.col(star_col).map_elements(get_star_bucket, return_dtype=pl.Utf8).alias("star_bucket")
+    )
+    total_repositories = df.height
     star_buckets = ['0–100', '101–500', '>500']
 
     # If order is given, map display names back to keys
@@ -42,21 +48,6 @@ def plot_feature_distribution_by_star_bucket(
     else:
         feature_keys = features
 
-    results = []
-    for feature in feature_keys:
-        for bucket in star_buckets:
-            subset = df[df['star_bucket'] == bucket]
-            total = len(subset)
-            count = subset[feature].notna().sum()
-            pct = (count / total) * 100 if total > 0 else 0
-            results.append({
-                'Feature': feature,
-                'Star Bucket': bucket,
-                'Percent': pct,
-                'Count': count
-            })
-
-    plot_df = pd.DataFrame(results)
     x = np.arange(len(feature_keys))
     width = 0.25
     cmap = plt.colormaps['tab20']
@@ -66,18 +57,28 @@ def plot_feature_distribution_by_star_bucket(
         fig, ax = plt.subplots(figsize=(14, 8))
 
     for i, bucket in enumerate(star_buckets):
-        bucket_data = plot_df[plot_df['Star Bucket'] == bucket]
+        bucket_df = df.filter(pl.col("star_bucket") == bucket)
+        total = bucket_df.height
+
+        percents = []
+        counts = []
+        for feature in feature_keys:
+            count = int(bucket_df[feature].is_not_null().sum()) if feature in bucket_df.columns else 0
+            pct = (count / total) * 100 if total > 0 else 0
+            percents.append(pct)
+            counts.append(count)
+
         bar_positions = x + (i - 1) * width
         bars = ax.bar(
             bar_positions,
-            bucket_data['Percent'],
+            percents,
             width,
             label=bucket,
             color=colors[i]
         )
 
         # Add raw count labels on top
-        for bar, count in zip(bars, bucket_data['Count']):
+        for bar, count in zip(bars, counts):
             height = bar.get_height()
             if height > 0:
                 ax.annotate(f'{count}',

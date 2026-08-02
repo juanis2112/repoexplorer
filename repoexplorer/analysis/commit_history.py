@@ -11,9 +11,8 @@ x-axis labels every three months to reduce clutter.
 from datetime import datetime, timezone
 
 import matplotlib.dates as mdates
-
 import matplotlib.pyplot as plt
-import pandas as pd
+import polars as pl
 
 
 # Default date range: Jan 20, 2021 to Feb 25, 2026
@@ -21,8 +20,32 @@ DEFAULT_START = datetime(2021, 3, 1, tzinfo=timezone.utc)
 DEFAULT_END = datetime(2026, 1, 31, tzinfo=timezone.utc)
 
 
+def _to_utc_datetime(df: pl.DataFrame, col: str) -> pl.Series:
+    """
+    Coerce a column to UTC Datetime, handling string and existing datetime dtypes.
+    Returns a Series of dtype Datetime[us, UTC] with nulls where parsing fails.
+    """
+    dtype = df.schema[col]
+
+    if dtype == pl.Utf8 or dtype == pl.String:
+        series = df[col].str.to_datetime(format=None, strict=False, time_unit="us")
+    elif isinstance(dtype, pl.Datetime):
+        series = df[col].cast(pl.Datetime("us"), strict=False)
+    else:
+        # Fallback: cast through string
+        series = df[col].cast(pl.Utf8, strict=False).str.to_datetime(format=None, strict=False, time_unit="us")
+
+    # Ensure UTC timezone
+    if series.dtype.time_zone is None:
+        series = series.dt.replace_time_zone("UTC")
+    else:
+        series = series.dt.convert_time_zone("UTC")
+
+    return series
+
+
 def plot_commit_history(
-    filtered_data: pd.DataFrame,
+    filtered_data,
     ax=None,
     start_date=None,
     end_date=None,
@@ -35,7 +58,7 @@ def plot_commit_history(
 
     Parameters
     ----------
-    filtered_data : pandas.DataFrame
+    filtered_data : polars.DataFrame
         Commits data with at least a "date" column.
     ax : matplotlib.axes.Axes, optional
         Axes to plot on. If None, creates a new figure.
@@ -56,67 +79,89 @@ def plot_commit_history(
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 6))
 
-    if filtered_data.empty or "date" not in filtered_data.columns:
+    if not isinstance(filtered_data, pl.DataFrame):
+        filtered_data = pl.DataFrame(filtered_data)
+
+    if filtered_data.is_empty() or "date" not in filtered_data.columns:
         ax.set_title("No commit data", fontsize=title_size)
         return ax
 
-    # Count how many repositories are represented in the input.
-    # Prefer common repository identifier columns when available.
-    repo_id_cols = ["full_name", "name", "repo_name", "repository"]
-    repo_col = next((c for c in repo_id_cols if c in filtered_data.columns), None)
-    total_repositories = len(filtered_data)
-    df = filtered_data[["date"]].copy()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.dropna(subset=["date"])
-    if df.empty:
+    total_repositories = filtered_data.height
+
+    # Parse date column to UTC Datetime
+    date_series = _to_utc_datetime(filtered_data, "date")
+    df = pl.DataFrame({"date": date_series}).drop_nulls("date")
+
+    if df.is_empty():
         ax.set_title("No valid dates in commits", fontsize=title_size)
         return ax
 
-    start_ts = pd.Timestamp(start_date if start_date is not None else DEFAULT_START)
-    end_ts = pd.Timestamp(end_date if end_date is not None else DEFAULT_END)
-    if start_ts.tz is None:
-        start_ts = start_ts.tz_localize("UTC")
-    else:
-        start_ts = start_ts.tz_convert("UTC")
-    if end_ts.tz is None:
-        end_ts = end_ts.tz_localize("UTC")
-    else:
-        end_ts = end_ts.tz_convert("UTC")
-    df["date"] = pd.to_datetime(df["date"], utc=True)
-    df = df[(df["date"] >= start_ts) & (df["date"] <= end_ts)]
-    if df.empty:
+    start_dt = start_date if start_date is not None else DEFAULT_START
+    end_dt = end_date if end_date is not None else DEFAULT_END
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+
+    df = df.filter(
+        (pl.col("date") >= start_dt) & (pl.col("date") <= end_dt)
+    )
+
+    if df.is_empty():
         ax.set_title("No commits in the selected period", fontsize=title_size)
         return ax
 
-    # Aggregate total commits per calendar month using PeriodIndex
-    month_periods = df["date"].dt.to_period("M")
-    counts = month_periods.value_counts().sort_index()
+    # Aggregate total commits per calendar month
+    monthly = (
+        df
+        .with_columns([
+            pl.col("date").dt.year().alias("year"),
+            pl.col("date").dt.month().alias("month"),
+        ])
+        .group_by(["year", "month"])
+        .agg(pl.len().alias("count"))
+        .sort(["year", "month"])
+    )
 
-    # Ensure we have an entry (possibly zero) for every month
-    # between the first and last month that actually have commits
-    first_period = counts.index.min()
-    last_period = counts.index.max()
-    all_periods = pd.period_range(start=first_period, end=last_period, freq="M")
-    counts = counts.reindex(all_periods, fill_value=0)
+    # Span every month between first and last with data (fill zeros for gaps)
+    rows = monthly.iter_rows(named=True)
+    first = next(rows, None)
+    if first is None:
+        ax.set_title("No commits in the selected period", fontsize=title_size)
+        return ax
 
-    # Convert periods to timestamps for plotting
-    month_index = counts.index.to_timestamp()
+    # Rebuild as a lookup dict for quick access
+    counts_lookup = {(r["year"], r["month"]): r["count"] for r in monthly.iter_rows(named=True)}
+    first_year, first_month = monthly["year"][0], monthly["month"][0]
+    last_year, last_month = monthly["year"][-1], monthly["month"][-1]
+
+    # Walk every (year, month) in the range
+    all_months: list[tuple[int, int]] = []
+    y, m = first_year, first_month
+    while (y, m) <= (last_year, last_month):
+        all_months.append((y, m))
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+
+    counts_list = [counts_lookup.get((y, m), 0) for y, m in all_months]
+    month_dates = [datetime(y, m, 1, tzinfo=timezone.utc) for y, m in all_months]
+
     ax.plot(
-        month_index,
-        counts.values,
+        month_dates,
+        counts_list,
         marker="o",
         markersize=4,
         linewidth=1.5,
         color="#0d6efd",
     )
-    ax.set_xlim(month_index.min(), month_index.max())
+    ax.set_xlim(month_dates[0], month_dates[-1])
     # Show all monthly points, but label only every 3 months
-    # Anchor labels to March/June/September/December so first is 2021-03
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[3, 6, 9, 12]))
     ax.set_xlabel("Time", fontsize=label_size)
     ax.set_ylabel("Number of commits", fontsize=label_size)
-
 
     title = f"Commit activity by month (Total repositories: {total_repositories})"
     ax.set_title(title, fontsize=title_size)
@@ -128,7 +173,7 @@ def plot_commit_history(
 
 def main():
     """Load commits from Data/parquet/commits_combined.parquet and plot commit history."""
-    df = pd.read_parquet("Data/parquet/commits_combined.parquet")
+    df = pl.read_parquet("Data/parquet/commits_combined.parquet")
     plot_commit_history(df)
     plt.show()
 
