@@ -2,10 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import altair as alt
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from matplotlib.colors import to_hex
-import pandas as pd
+import polars as pl
 
 from repoexplorer.analysis.altair_pie_helpers import (
     pie_arc_layer,
@@ -13,96 +10,18 @@ from repoexplorer.analysis.altair_pie_helpers import (
     prepare_pie_label_data,
 )
 
+_TAB20 = [
+    "#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c",
+    "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5",
+    "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f",
+    "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5",
+]
+
+_EMPTY_DF = pl.DataFrame({"Language": pl.Series([], dtype=pl.Utf8), "Count": pl.Series([], dtype=pl.Int64)})
+
 LANGUAGE_LABEL_MAP = {
     "Jupyter Notebook": "Jupyter",
 }
-
-def plot_language_distribution(filtered_data, acronym="", ax=None, color_map=None,
-    title_prefix="", hide_ylabel=False, language_order=None,
-    ylim=None, label_size=25, title_size=24, props=12, other_thres=0.02,
-    legend_size=None):
-    """
-    Plots pie charts representing the distribution of programming languages used in the projects:
-    - Grouped language distribution (major languages with at least 2% usage).
-    - Minor language distribution (languages with less than 2% usage).
-
-    Parameters
-    ----------
-    filtered_data : pandas.DataFrame
-        The filtered dataset containing the project languages.
-
-    Returns
-    -------
-    None
-        This function generates and saves pie charts but does not return any values.
-    """
-    total_repositories = len(filtered_data)
-
-    # Apply replacements
-    filtered_data['language'] = filtered_data['language'].replace(LANGUAGE_LABEL_MAP)
-    language_counts = filtered_data['language'].value_counts()
-    total_languages = language_counts.sum()
-
-    lang_major = language_counts[language_counts / total_languages >= 0.05].copy()
-    lang_minor = language_counts[language_counts / total_languages < 0.05].copy()
-
-    lang_grouped = lang_major.copy()
-    if not lang_minor.empty:
-        lang_grouped['Other'] = lang_minor.sum()
-
-    labels = lang_grouped.index.tolist()
-    cmap = plt.colormaps['tab20']
-    category_colors = {cat: cmap(i) for i, cat in enumerate(labels)}
-    colors = [category_colors[cat] for cat in labels] # fallback: hot pink
- # hot pink if missing
-
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8))
-
-    wedges, texts, autotexts = ax.pie(
-        lang_grouped,
-        labels=labels,
-        colors=colors,
-        autopct='%1.1f%%',
-        startangle=140,
-        textprops={'fontsize': props}
-    )
-
-    for text in texts:
-        text.set_fontsize(label_size)
-    for autotext in autotexts:
-        autotext.set_fontsize(props)
-
-    if title_prefix:
-        ax.set_title(
-            rf"$\bf{{{title_prefix}\ {acronym}}}$ (Total: {total_repositories})",
-            fontsize=title_size,
-            loc="left",
-            pad=20
-        )
-    else:
-        ax.set_title(
-            rf"$\bf{{Language\ Distribution}}$ (Total: {total_repositories})",
-            fontsize=title_size,
-            loc="center",
-            pad=20
-        )
-
-    
-    # # Language Distribution - Minor Plot
-    # if not lang_minor.empty:
-    #     total_repositories = lang_minor.sum()
-    #     fig, ax = plt.subplots(figsize=(8, 8))
-    #     wedges, texts, autotexts = ax.pie(lang_minor, labels=lang_minor.index, autopct='%1.1f%%', startangle=140)
-    #     for text in texts:
-    #         text.set_fontsize(8)
-    #     for i, autotext in enumerate(autotexts):
-    #         autotext.set_fontsize(8)
-    #         percentage = (lang_minor.iloc[i] / total_languages) * 100
-    #         autotext.set_text(f'{percentage:.1f}%')
-    #     ax.set_title(f"{acronym.upper()} Language Distribution (Minor Categories) — Total Repositories: {total_repositories}")
-    #     plt.savefig(f'plots/{acronym}/language_distribution_minor.png', dpi=300, bbox_inches='tight')
-    #     plt.close()
 
 
 def plot_language_distribution_altair(
@@ -111,58 +30,81 @@ def plot_language_distribution_altair(
     label_size=10,
     title_size=12,
     textprops=8,
-    other_thres=0.05,
+    top_n=8,
 ):
-    """
-    Altair version of the language distribution pie chart for on-screen
-    rendering. Mirrors the matplotlib version in `plot_language_distribution`.
-    """
+    """Altair pie chart: language distribution (major languages + 'Other' bucket)."""
     width = "container"
     height = "container"
 
     if (
         filtered_data is None
-        or filtered_data.empty
+        or filtered_data.is_empty()
         or "language" not in filtered_data.columns
     ):
         return (
-            alt.Chart(pd.DataFrame({"Language": [], "Count": []}))
+            alt.Chart(_EMPTY_DF)
             .mark_arc()
             .properties(width=width, height=height, title="Language Distribution")
         )
 
-    total_repositories = len(filtered_data)
-    languages = filtered_data["language"].replace(LANGUAGE_LABEL_MAP)
-    language_counts = languages.value_counts()
-    total_languages = language_counts.sum()
+    total_repositories = filtered_data.height
 
-    if language_counts.empty or total_languages == 0:
+    # Normalize language labels
+    data = filtered_data.with_columns(
+        pl.when(pl.col("language").is_null()).then(pl.lit("None"))
+        .when(pl.col("language") == "Jupyter Notebook").then(pl.lit("Jupyter"))
+        .otherwise(pl.col("language"))
+        .alias("language")
+    )
+
+    counts = (
+        data
+        .group_by("language")
+        .agg(pl.len().cast(pl.Int64).alias("Count"))
+        .sort("Count", descending=True)
+    )
+
+    total_languages = counts["Count"].sum()
+
+    if counts.is_empty() or total_languages == 0:
         return (
-            alt.Chart(pd.DataFrame({"Language": [], "Count": []}))
+            alt.Chart(_EMPTY_DF)
             .mark_arc()
             .properties(width=width, height=height, title="Language Distribution")
         )
 
-    lang_major = language_counts[language_counts / total_languages >= other_thres].copy()
-    lang_minor = language_counts[language_counts / total_languages < other_thres].copy()
+    # Take the top N languages by count (excluding "None"); rest go to "Other"
+    langs_ranked = (
+        counts
+        .filter(pl.col("language") != "None")
+        .sort("Count", descending=True)
+    )
+    top_names = set(langs_ranked.head(top_n)["language"].to_list())
 
-    lang_grouped = lang_major.copy()
-    if not lang_minor.empty:
-        lang_grouped["Other"] = lang_minor.sum()
+    major = counts.filter(pl.col("language").is_in(top_names))
+    minor = counts.filter(
+        ~pl.col("language").is_in(top_names) & (pl.col("language") != "None")
+    )
 
-    labels = lang_grouped.index.tolist()
-    cmap = plt.colormaps["tab20"]
-    palette = [to_hex(cmap(i)) for i in range(len(labels))]
+    if minor.height > 0:
+        other_count = int(minor["Count"].sum())
+        other_row = pl.DataFrame({"language": ["Other"], "Count": pl.Series([other_count], dtype=pl.Int64)})
+        lang_grouped = pl.concat([major, other_row])
+    else:
+        lang_grouped = major
+
+    labels = lang_grouped["language"].to_list()
+    palette = [_TAB20[i % 20] for i in range(len(labels))]
     color_scale = alt.Scale(domain=labels, range=palette)
 
-    plot_df = pd.DataFrame(
-        {
-            "Language": labels,
-            "Count": [int(lang_grouped[l]) for l in labels],
-        }
-    )
-    plot_df["PercentLabel"] = plot_df["Count"].apply(
-        lambda c: f"{(c / total_languages) * 100:.1f}%"
+    plot_df = (
+        lang_grouped
+        .rename({"language": "Language"})
+        .with_columns(
+            (pl.col("Count").cast(pl.Float64) / total_languages * 100)
+            .map_elements(lambda c: f"{c:.1f}%", return_dtype=pl.Utf8)
+            .alias("PercentLabel")
+        )
     )
     plot_df = prepare_pie_label_data(plot_df)
 
@@ -183,14 +125,7 @@ def plot_language_distribution_altair(
         padding=0,
     )
 
-    arcs = pie_arc_layer(
-        plot_df,
-        outer_radius_expr,
-        "Language:N",
-        color_scale,
-        legend,
-        tooltip,
-    )
+    arcs = pie_arc_layer(plot_df, outer_radius_expr, "Language:N", color_scale, legend, tooltip)
     pct_text = pie_pct_label_layer(plot_df, text_radius_expr, textprops)
 
     title = f"Language Distribution (Total: {total_repositories})"

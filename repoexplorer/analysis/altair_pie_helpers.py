@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 
 import altair as alt
-import pandas as pd
+import polars as pl
 
 
-def prepare_pie_label_data(plot_df, count_col="Count"):
+def prepare_pie_label_data(plot_df):
     """Preserve slice order so arcs and labels stack identically."""
-    df = plot_df.copy()
-    df["stack_order"] = range(len(df))
-    return df
+    return plot_df.with_columns(
+        pl.Series("stack_order", list(range(plot_df.height)))
+    )
 
 
 def pie_arc_layer(plot_df, outer_radius_expr, color_field, color_scale, legend, tooltip):
@@ -32,7 +32,8 @@ def pie_pct_label_layer(
     label_field="PercentLabel",
     min_label_pct=0.03,
 ):
-    total = float(plot_df["Count"].sum())
+    total_val = plot_df["Count"].sum()
+    total = float(total_val) if total_val is not None else 0.0
     theta_scale = alt.Scale(domain=[0, total]) if total > 0 else alt.Undefined
 
     return (

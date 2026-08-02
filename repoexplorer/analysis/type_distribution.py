@@ -2,112 +2,16 @@
 # -*- coding: utf-8 -*-
 
 import altair as alt
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from matplotlib.colors import to_hex
-import pandas as pd
+import polars as pl
 
 from repoexplorer.analysis.altair_pie_helpers import (
     pie_arc_layer,
     pie_pct_label_layer,
     prepare_pie_label_data,
 )
+from repoexplorer.analysis.type_colors import type_color_scale
 
-
-def plot_type_distribution(
-    filtered_data, acronym, ax=None, color_map=None, 
-    title_prefix=None, label_size=25, title_size=24, textprops=15):
-    """
-    Plots a pie chart representing the distribution of repository types based on GPT-predicted categories.
-
-    Parameters
-    ----------
-    filtered_data : pandas.DataFrame
-        The filtered dataset containing the 'type_prediction_gpt_5_mini' column.
-
-    acronym : str
-        Acronym for the institution or group being plotted.
-
-    ax : matplotlib.axes.Axes, optional
-        An existing matplotlib axis to plot on. If None, creates a new figure.
-
-    color_map : dict, optional
-        A dictionary mapping category labels to colors.
-
-    title_prefix : str, optional
-        Text to prefix the plot title with.
-
-    Returns
-    -------
-    None
-        This function generates a pie chart but does not return any values.
-    """
-    # Ignore rows where type is "error" (case-insensitive)
-    type_col = "type_prediction_gpt_5_mini"
-    if type_col not in filtered_data.columns:
-        return
-    plot_data = filtered_data[
-        filtered_data[type_col].astype(str).str.strip().str.lower() != "error"
-    ]
-    total_repositories = len(plot_data)
-    category_counts = plot_data[type_col].value_counts()
-
-    if category_counts.empty:
-        if ax is None:
-            fig, ax = plt.subplots(figsize=(8, 8))
-        ax.text(0.5, 0.5, "No data to display", ha="center", va="center", fontsize=14)
-        return
-
-    labels = category_counts.index.tolist()
-
-    cmap = plt.colormaps['tab20']
-    category_colors = {cat: cmap(i) for i, cat in enumerate(labels)}
-    colors = [category_colors[cat] for cat in labels]
-    
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8))
-
-    wedges, texts, autotexts = ax.pie(
-        category_counts,
-        labels=labels,
-        colors=colors,
-        autopct='%1.1f%%',
-        startangle=140,
-        textprops={'fontsize': textprops}
-    )
-
-    for text in texts:
-        text.set_fontsize(label_size)
-    for autotext in autotexts:
-        autotext.set_fontsize(textprops)
-        
-    for i, text in enumerate(texts):
-        label = text.get_text().strip().upper()
-    
-        if label == "DOCS":
-            # Move label lower
-            x, y = text.get_position()
-            text.set_position((x, y - 0.1))
-    
-            # Move percentage text slightly lower too
-            x_pct, y_pct = autotexts[i].get_position()
-            autotexts[i].set_position((x_pct, y_pct - 0.08))
-
-
-    if title_prefix:
-        ax.set_title(
-            rf"$\bf{{{title_prefix}\ {acronym}}}$ (Total: {total_repositories})",
-            fontsize=title_size,
-            loc="left",
-            pad=20
-        )
-    else:
-        ax.set_title(
-            rf"$\bf{{Project\ Type\ Distribution}}$ (Total: {total_repositories})",
-            fontsize=title_size,
-            loc="center",
-            pad=20
-        )
+_EMPTY_DF = pl.DataFrame({"Category": pl.Series([], dtype=pl.Utf8), "Count": pl.Series([], dtype=pl.Int64)})
 
 
 def plot_type_distribution_altair(
@@ -117,51 +21,54 @@ def plot_type_distribution_altair(
     title_size=12,
     textprops=8,
 ):
-    """
-    Altair version of the project type distribution pie chart for on-screen
-    rendering. Mirrors the matplotlib version in `plot_type_distribution`.
-    """
+    """Altair pie chart: distribution of repository types (GPT-predicted categories)."""
     width = "container"
     height = "container"
     type_col = "type_prediction_gpt_5_mini"
 
     if (
         filtered_data is None
-        or filtered_data.empty
+        or filtered_data.is_empty()
         or type_col not in filtered_data.columns
     ):
         return (
-            alt.Chart(pd.DataFrame({"Category": [], "Count": []}))
+            alt.Chart(_EMPTY_DF)
             .mark_arc()
             .properties(width=width, height=height, title="Project Type Distribution")
         )
 
-    plot_data = filtered_data[
-        filtered_data[type_col].astype(str).str.strip().str.lower() != "error"
-    ]
-    total_repositories = len(plot_data)
-    category_counts = plot_data[type_col].value_counts()
-
-    if category_counts.empty:
-        return (
-            alt.Chart(pd.DataFrame({"Category": [], "Count": []}))
-            .mark_arc()
-            .properties(width=width, height=height, title="Project Type Distribution")
-        )
-
-    labels = category_counts.index.tolist()
-    cmap = plt.colormaps["tab20"]
-    palette = [to_hex(cmap(i)) for i in range(len(labels))]
-    color_scale = alt.Scale(domain=labels, range=palette)
-
-    plot_df = pd.DataFrame(
-        {
-            "Category": labels,
-            "Count": [int(category_counts[c]) for c in labels],
-        }
+    # Filter out "error" predictions
+    plot_data = filtered_data.filter(
+        pl.col(type_col).cast(pl.Utf8).str.strip_chars().str.to_lowercase() != "error"
     )
-    plot_df["PercentLabel"] = plot_df["Count"].apply(
-        lambda c: f"{(c / total_repositories) * 100:.1f}%"
+    total_repositories = plot_data.height
+
+    counts = (
+        plot_data
+        .filter(pl.col(type_col).is_not_null())
+        .group_by(type_col)
+        .agg(pl.len().cast(pl.Int64).alias("Count"))
+        .sort("Count", descending=True)
+    )
+
+    if counts.is_empty():
+        return (
+            alt.Chart(_EMPTY_DF)
+            .mark_arc()
+            .properties(width=width, height=height, title="Project Type Distribution")
+        )
+
+    labels = counts[type_col].to_list()
+    color_scale = type_color_scale(labels)
+
+    plot_df = (
+        counts
+        .rename({type_col: "Category"})
+        .with_columns(
+            (pl.col("Count").cast(pl.Float64) / total_repositories * 100)
+            .map_elements(lambda c: f"{c:.1f}%", return_dtype=pl.Utf8)
+            .alias("PercentLabel")
+        )
     )
     plot_df = prepare_pie_label_data(plot_df)
 
@@ -182,14 +89,7 @@ def plot_type_distribution_altair(
         padding=0,
     )
 
-    arcs = pie_arc_layer(
-        plot_df,
-        outer_radius_expr,
-        "Category:N",
-        color_scale,
-        legend,
-        tooltip,
-    )
+    arcs = pie_arc_layer(plot_df, outer_radius_expr, "Category:N", color_scale, legend, tooltip)
     pct_text = pie_pct_label_layer(plot_df, text_radius_expr, textprops)
 
     title = f"Project Type Distribution (Total: {total_repositories})"
